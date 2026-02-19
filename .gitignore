@@ -1,0 +1,28 @@
+# Deny all except .gitignore
+*
+!/.gitignore
+
+# Allowed filetypes
+!/**/
+!**/*.css
+!**/*.html
+!**/*.js
+!**/*.json
+!**/*.lock
+!**/*.md
+!**/*.mjs
+!**/*.mo
+!**/*.php
+!**/*.po
+!**/*.pot
+!**/*.scss
+!**/*.sh
+!**/*.toml
+!**/*.ts
+!**/*.xml
+!**/*.yml
+
+# Disallow folders
+/assets/
+/node_modules/
+/vendor/
