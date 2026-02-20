@@ -5,13 +5,13 @@ if (!defined('ABSPATH')) {
     define('ABSPATH', __DIR__ . '/../../../');
 }
 
-define('{{BPREPLACECAPSCONSTANT}}_PATH', __DIR__ . '/../../../');
-define('{{BPREPLACECAPSCONSTANT}}_URL', 'https://example.com/wp-content/plugins/' . 'modularity-{{BPREPLACESLUG}}');
-define('{{BPREPLACECAPSCONSTANT}}_TEMPLATE_PATH', {{BPREPLACECAPSCONSTANT}}_PATH . 'templates/');
+define('API_SPONSOR_MANAGER_PATH', __DIR__ . '/../../../');
+define('API_SPONSOR_MANAGER_URL', 'https://example.com/wp-content/plugins/' . 'modularity-api-sponsor-manager');
+define('API_SPONSOR_MANAGER_TEMPLATE_PATH', API_SPONSOR_MANAGER_PATH . 'templates/');
 
 
 // Register the autoloader
 $loader = require __DIR__ . '/../../../vendor/autoload.php';
-$loader->addPsr4('{{BPREPLACENAMESPACE}}\\Test\\', __DIR__ . '/../php/');
+$loader->addPsr4('ApiSponsorManager\\Test\\', __DIR__ . '/../php/');
 
 require_once __DIR__ . '/PluginTestCase.php';

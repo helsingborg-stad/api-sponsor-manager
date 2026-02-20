@@ -1,0 +1,55 @@
+<?php
+
+/**
+ * Plugin Name:       API Sponsor Manager
+ * Plugin URI:        https://github.com/helsingborg-stad/api-sponsor-manager
+ * Description:       Manages looking for sponsor listnings.
+ * Version:           1.0.0
+ * Author:            Nikolas Ramsted
+ * Author URI:        https://github.com/helsingborg-stad
+ * License:           MIT
+ * License URI:       https://opensource.org/licenses/MIT
+ * Text Domain:       api-sponsor-manager
+ * Domain Path:       /languages
+ */
+
+use AcfService\Implementations\NativeAcfService;
+use WpService\Implementations\NativeWpService;
+use WpUtilService\WpUtilService;
+
+ // Protect agains direct file access
+if (! defined('WPINC')) {
+    die;
+}
+
+define('API_SPONSOR_MANAGER_PATH', plugin_dir_path(__FILE__));
+define('API_SPONSOR_MANAGER_URL', plugins_url('', __FILE__));
+define('API_SPONSOR_MANAGER_TEMPLATE_PATH', API_SPONSOR_MANAGER_PATH . 'templates/');
+define('API_SPONSOR_MANAGER_TEXT_DOMAIN', 'api-sponsor-manager');
+
+load_plugin_textdomain(API_SPONSOR_MANAGER_TEXT_DOMAIN, false, API_SPONSOR_MANAGER_PATH . '/languages');
+
+require_once API_SPONSOR_MANAGER_PATH . 'Public.php';
+
+// Register the autoloader
+require __DIR__ . '/vendor/autoload.php';
+
+// Acf auto import and export
+add_action('acf/init', function () {
+    $acfExportManager = new \AcfExportManager\AcfExportManager();
+    $acfExportManager->setTextdomain('api-sponsor-manager');
+    $acfExportManager->setExportFolder(API_SPONSOR_MANAGER_PATH . 'source/php/AcfFields/');
+    $acfExportManager->autoExport(array(
+        'api-sponsor-manager-settings' => 'group_61ea7a87e8aaa' //Update with acf id here, settings view
+    ));
+    $acfExportManager->import();
+});
+
+$wpService = new NativeWpService();
+$wpUtilService = new WpUtilService($wpService);
+
+// Start application
+new CustomShortLinks\App();
+
+// Start application
+new ApiSponsorManager\App($wpUtilService->enqueue(__DIR__), $wpService, new NativeAcfService());

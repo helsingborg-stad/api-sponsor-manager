@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace {{BPREPLACENAMESPACE}};
+namespace ApiSponsorManager;
 
 use WpService\Contracts\AddAction;
 use WpService\Contracts\AddFilter;
@@ -30,7 +30,7 @@ class App
      */
     public function enqueueStyles()
     {
-        $this->wpEnqueue->add('css/{{BPREPLACESLUG}}.css');
+        $this->wpEnqueue->add('css/api-sponsor-manager.css');
     }
 
     /**
@@ -39,6 +39,6 @@ class App
      */
     public function enqueueScripts()
     {
-        $this->wpEnqueue->add('js/{{BPREPLACESLUG}}.js');
+        $this->wpEnqueue->add('js/api-sponsor-manager.js');
     }
 }

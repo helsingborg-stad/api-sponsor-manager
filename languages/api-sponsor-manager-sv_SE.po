@@ -1,6 +1,6 @@
 msgid ""
 msgstr ""
-"Project-Id-Version: {{BPREPLACENAME}}\n"
+"Project-Id-Version: API Sponsor Manager\n"
 "POT-Creation-Date: 2022-03-28 16:14+0200\n"
 "PO-Revision-Date: 2022-03-28 16:14+0200\n"
 "Last-Translator: \n"
@@ -10,7 +10,7 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: Poedit 3.4.2\n"
-"X-Domain: {{BPREPLACESLUG}}\n"
+"X-Domain: api-sponsor-manager\n"
 "X-Poedit-Basepath: ..\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 "X-Poedit-SourceCharset: UTF-8\n"
@@ -19,21 +19,21 @@ msgstr ""
 "X-Poedit-SearchPathExcluded-0: *.js\n"
 
 #. Plugin Name of the plugin/theme
-msgid "{{BPREPLACENAME}}"
+msgid "API Sponsor Manager"
 msgstr ""
 
 #. Plugin URI of the plugin/theme
-msgid "https://github.com/{{BPREPLACEGITHUB}}/{{BPREPLACESLUG}}"
+msgid "https://github.com/helsingborg-stad/api-sponsor-manager"
 msgstr ""
 
 #. Description of the plugin/theme
-msgid "{{BPREPLACEDESCRIPTION}}"
+msgid "Manages looking for sponsor listnings."
 msgstr ""
 
 #. Author of the plugin/theme
-msgid "{{BPREPLACEAUTHOR}}"
+msgid "Nikolas Ramsted"
 msgstr ""
 
 #. Author URI of the plugin/theme
-msgid "https://github.com/{{BPREPLACEGITHUB}}"
+msgid "https://github.com/helsingborg-stad"
 msgstr ""

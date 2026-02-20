@@ -1,8 +1,8 @@
 import { createViteConfig } from 'vite-config-factory';
 
 const entries = {
-	'js/{{BPREPLACESLUG}}': './source/js/{{BPREPLACESLUG}}.ts',
-	'css/{{BPREPLACESLUG}}': './source/sass/{{BPREPLACESLUG}}.scss',
+	'js/api-sponsor-manager': './source/js/api-sponsor-manager.ts',
+	'css/api-sponsor-manager': './source/sass/api-sponsor-manager.scss',
 };
 
 export default createViteConfig(entries, {

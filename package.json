@@ -1,18 +1,18 @@
 {
-    "name": "{{BPREPLACESLUG}}",
+    "name": "api-sponsor-manager",
     "version": "1.0.0",
-    "description": "{{BPREPLACEDESCRIPTION}}",
+    "description": "Manages looking for sponsor listnings.",
     "main": "",
     "repository": {
         "type": "git",
-        "url": "https://github.com/{{BPREPLACEGITHUB}}/{{BPREPLACESLUG}}"
+        "url": "https://github.com/helsingborg-stad/api-sponsor-manager"
     },
-    "author": "{{BPREPLACEAUTHOR}}",
+    "author": "Nikolas Ramsted",
     "license": "MIT",
     "bugs": {
-        "url": "https://github.com/{{BPREPLACEGITHUB}}/{{BPREPLACESLUG}}/issues"
+        "url": "https://github.com/helsingborg-stad/api-sponsor-manager/issues"
     },
-    "homepage": "https://github.com/{{BPREPLACEGITHUB}}/{{BPREPLACESLUG}}",
+    "homepage": "https://github.com/helsingborg-stad/api-sponsor-manager",
     "scripts": {
         "test": "jest --coverage --maxWorkers=50%",
         "dev": "vite",

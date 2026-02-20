@@ -1,6 +1,6 @@
 {
-    "name": "{{BPREPLACEGITHUB}}/{{BPREPLACESLUG}}",
-    "description": "{{BPREPLACEDESCRIPTION}}",
+    "name": "helsingborg-stad/api-sponsor-manager",
+    "description": "Manages looking for sponsor listnings.",
     "type": "wordpress-plugin",
     "license": "MIT",
     "scripts": {
@@ -12,13 +12,13 @@
     },
     "authors": [
         {
-            "name": "{{BPREPLACEAUTHOR}}",
-            "email": "{{BPREPLACEAUTHOREMAIL}}"
+            "name": "Nikolas Ramsted",
+            "email": "nikolas.ramstedt@helsingborg.se"
         }
     ],
     "autoload": {
         "psr-4": {
-            "{{BPREPLACENAMESPACE}}\\": "source/php/"
+            "ApiSponsorManager\\": "source/php/"
         }
     },
     "minimum-stability": "stable",
