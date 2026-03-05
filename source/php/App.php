@@ -22,9 +22,10 @@ class App
         private AcfService $acfService,
     ) {
         $this->init(...[
-            new \ApiSponsorManager\Assignment\PostType($wpService),
-            new \ApiSponsorManager\Activity\Taxonomy($wpService),
-            new \ApiSponsorManager\Resource\Taxonomy($wpService),
+            new Assignment\PostType($wpService),
+            new Offering\PostType($wpService),
+            new Activity\Taxonomy($wpService),
+            new Resource\Taxonomy($wpService),
         ]);
     }
 
