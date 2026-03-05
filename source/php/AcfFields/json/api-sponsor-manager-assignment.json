@@ -1,9 +1,9 @@
 [{
-    "key": "group_69a949c52c562",
-    "title": "Assignment",
+    "key": "group_69a97690d547c",
+    "title": "Sponsor Assignment",
     "fields": [
         {
-            "key": "field_69a956161beb1",
+            "key": "field_69a986e32c6d7",
             "label": "Assignment Description",
             "name": "assignment_description",
             "aria-label": "",
@@ -24,7 +24,7 @@
             "delay": 0
         },
         {
-            "key": "field_69a9571f62aea",
+            "key": "field_69a985722f8b4",
             "label": "Assignment Image",
             "name": "assignment_image",
             "aria-label": "",
@@ -50,49 +50,85 @@
             "preview_size": "medium"
         },
         {
-            "key": "field_69a955e91beaf",
+            "key": "field_69a985b92f8b5",
             "label": "Assignment Date",
             "name": "assignment_date",
             "aria-label": "",
-            "type": "date_time_picker",
+            "type": "date_picker",
             "instructions": "",
             "required": 1,
             "conditional_logic": 0,
             "wrapper": {
-                "width": "",
+                "width": "50",
                 "class": "",
                 "id": ""
             },
-            "display_format": "d\/m\/Y g:i a",
-            "return_format": "d\/m\/Y g:i a",
+            "display_format": "d\/m\/Y",
+            "return_format": "d\/m\/Y",
             "first_day": 1,
             "default_to_current_date": 0,
             "allow_in_bindings": 0
         },
         {
-            "key": "field_69a9579762aec",
+            "key": "field_69a985dc2f8b6",
+            "label": "Assignment Time",
+            "name": "assignment_time",
+            "aria-label": "",
+            "type": "time_picker",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "50",
+                "class": "",
+                "id": ""
+            },
+            "display_format": "H:i:s",
+            "return_format": "H:i:s",
+            "allow_in_bindings": 0
+        },
+        {
+            "key": "field_69a987312c6d8",
             "label": "Assignment Due Date",
             "name": "assignment_due_date",
             "aria-label": "",
-            "type": "date_time_picker",
+            "type": "date_picker",
             "instructions": "",
             "required": 1,
             "conditional_logic": 0,
             "wrapper": {
-                "width": "",
+                "width": "50",
                 "class": "",
                 "id": ""
             },
-            "display_format": "d\/m\/Y g:i a",
-            "return_format": "d\/m\/Y g:i a",
+            "display_format": "d\/m\/Y",
+            "return_format": "d\/m\/Y",
             "first_day": 1,
             "default_to_current_date": 0,
             "allow_in_bindings": 0
         },
         {
-            "key": "field_69a957fbf8bae",
+            "key": "field_69a9874b2c6d9",
+            "label": "Assignment Due Time",
+            "name": "assignment_due_time",
+            "aria-label": "",
+            "type": "time_picker",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "50",
+                "class": "",
+                "id": ""
+            },
+            "display_format": "H:i:s",
+            "return_format": "H:i:s",
+            "allow_in_bindings": 0
+        },
+        {
+            "key": "field_69a986212c6d4",
             "label": "Assignment Location",
-            "name": "assignment_location",
+            "name": "location",
             "aria-label": "",
             "type": "google_map",
             "instructions": "",
@@ -110,34 +146,56 @@
             "allow_in_bindings": 0
         },
         {
-            "key": "field_69a9585433fc6",
-            "label": "Assignment Contact Type",
-            "name": "assignment_contact_type",
+            "key": "field_69a986592c6d5",
+            "label": "Assignment resources",
+            "name": "assignment_resources",
             "aria-label": "",
-            "type": "select",
+            "type": "taxonomy",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "",
                 "class": "",
                 "id": ""
             },
-            "choices": {
-                "mail": "Mail",
-                "mail_and_phone": "Mail & Phone",
-                "phone": "Phone"
-            },
-            "default_value": false,
-            "return_format": "value",
-            "multiple": 0,
+            "taxonomy": "resource",
+            "add_term": 1,
+            "save_terms": 1,
+            "load_terms": 0,
+            "return_format": "id",
+            "field_type": "multi_select",
             "allow_null": 0,
             "allow_in_bindings": 0,
-            "ui": 0,
-            "ajax": 0,
-            "placeholder": "",
-            "create_options": 0,
-            "save_options": 0
+            "bidirectional": 0,
+            "multiple": 0,
+            "bidirectional_target": []
+        },
+        {
+            "key": "field_69a986c82c6d6",
+            "label": "Assignment activities",
+            "name": "assignment_activities",
+            "aria-label": "",
+            "type": "taxonomy",
+            "instructions": "",
+            "required": 0,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "taxonomy": "activity",
+            "add_term": 1,
+            "save_terms": 1,
+            "load_terms": 0,
+            "return_format": "id",
+            "field_type": "multi_select",
+            "allow_null": 0,
+            "allow_in_bindings": 0,
+            "bidirectional": 0,
+            "multiple": 0,
+            "bidirectional_target": []
         }
     ],
     "location": [
@@ -150,7 +208,7 @@
         ]
     ],
     "menu_order": 0,
-    "position": "normal",
+    "position": "acf_after_title",
     "style": "default",
     "label_placement": "top",
     "instruction_placement": "label",

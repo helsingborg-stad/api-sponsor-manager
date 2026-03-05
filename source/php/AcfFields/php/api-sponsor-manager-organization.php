@@ -3,7 +3,7 @@
 if (function_exists('acf_add_local_field_group')) {
     acf_add_local_field_group(array(
     'key' => 'group_69a9552f0e029',
-    'title' => __('Organization', 'api-sponsor-manager'),
+    'title' => __('Association', 'api-sponsor-manager'),
     'fields' => array(
         0 => array(
             'key' => 'field_69a9552f100b5',
@@ -150,35 +150,6 @@
             'prepend' => '',
             'append' => '',
         ),
-        7 => array(
-            'key' => 'field_69a9552f102d5',
-            'label' => __('Organisation type', 'api-sponsor-manager'),
-            'name' => 'organisation_type',
-            'aria-label' => '',
-            'type' => 'select',
-            'instructions' => '',
-            'required' => 1,
-            'conditional_logic' => 0,
-            'wrapper' => array(
-                'width' => '',
-                'class' => '',
-                'id' => '',
-            ),
-            'choices' => array(
-                'association' => __('Association', 'api-sponsor-manager'),
-                'company' => __('Company', 'api-sponsor-manager'),
-            ),
-            'default_value' => false,
-            'return_format' => 'value',
-            'multiple' => 0,
-            'allow_null' => 0,
-            'allow_in_bindings' => 0,
-            'ui' => 0,
-            'ajax' => 0,
-            'placeholder' => '',
-            'create_options' => 0,
-            'save_options' => 0,
-        ),
     ),
     'location' => array(
         0 => array(
@@ -190,7 +161,7 @@
         ),
     ),
     'menu_order' => 0,
-    'position' => 'normal',
+    'position' => 'acf_after_title',
     'style' => 'default',
     'label_placement' => 'top',
     'instruction_placement' => 'label',

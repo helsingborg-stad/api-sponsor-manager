@@ -1,6 +1,6 @@
 [{
     "key": "group_69a9552f0e029",
-    "title": "Organization",
+    "title": "Association",
     "fields": [
         {
             "key": "field_69a9552f100b5",
@@ -146,35 +146,6 @@
             "placeholder": "",
             "prepend": "",
             "append": ""
-        },
-        {
-            "key": "field_69a9552f102d5",
-            "label": "Organisation type",
-            "name": "organisation_type",
-            "aria-label": "",
-            "type": "select",
-            "instructions": "",
-            "required": 1,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "",
-                "class": "",
-                "id": ""
-            },
-            "choices": {
-                "association": "Association",
-                "company": "Company"
-            },
-            "default_value": false,
-            "return_format": "value",
-            "multiple": 0,
-            "allow_null": 0,
-            "allow_in_bindings": 0,
-            "ui": 0,
-            "ajax": 0,
-            "placeholder": "",
-            "create_options": 0,
-            "save_options": 0
         }
     ],
     "location": [
@@ -187,7 +158,7 @@
         ]
     ],
     "menu_order": 0,
-    "position": "normal",
+    "position": "acf_after_title",
     "style": "default",
     "label_placement": "top",
     "instruction_placement": "label",

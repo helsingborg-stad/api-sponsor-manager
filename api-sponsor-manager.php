@@ -40,8 +40,8 @@ add_action('acf/init', function () {
     $acfExportManager->setTextdomain('api-sponsor-manager');
     $acfExportManager->setExportFolder(API_SPONSOR_MANAGER_PATH . 'source/php/AcfFields/');
     $acfExportManager->autoExport(array(
-        'api-sponsor-manager-assignment'    => 'group_69a949c52c562',
-        'api-sponsor-manager-organization'  => 'group_69a9552f0e029',
+        'api-sponsor-manager-assignment' => 'group_69a97690d547c',
+        'api-sponsor-manager-organization' => 'group_69a9552f0e029',
     ));
     $acfExportManager->import();
 });
