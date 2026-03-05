@@ -11,7 +11,7 @@ abstract class Taxonomy implements Hookable
 {
     abstract public function getName(): string;
 
-    abstract public function getObjectType(): string;
+    abstract public function getObjectType(): string|array;
 
     abstract public function getArgs(): array;
 

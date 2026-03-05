@@ -11,9 +11,9 @@ class Taxonomy extends CustomTaxonomy
         return 'activity';
     }
 
-    public function getObjectType(): string
+    public function getObjectType(): string|array
     {
-        return 'assignment';
+        return ['assignment', 'offering'];
     }
 
     public function getArgs(): array

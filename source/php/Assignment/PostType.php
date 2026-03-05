@@ -19,20 +19,19 @@ class PostType extends CustomPostType
             'public' => true,
             'hierarchical' => true,
             'menu_icon' => (new Icon('Event'))->getIcon(),
-            'rest_base' => 'assignments',
+            'rest_base' => 'sponsor-assignments',
             // 'rest_controller_class' => \ApiSponsorManager\,
-            'supports' => ['title', 'editor', 'revisions'],
-            'capability_type' => ['assignment', 'assignments'],
+            'supports' => ['title', 'revisions'],
         ];
     }
 
     public function getLabelSingular(): string
     {
-        return $this->wpService->__('Assignment', 'api-sponsor-manager');
+        return $this->wpService->__('Sponsor Assignment', 'api-sponsor-manager');
     }
 
     public function getLabelPlural(): string
     {
-        return $this->wpService->__('Assignments', 'api-sponsor-manager');
+        return $this->wpService->__('Sponsor Assignments', 'api-sponsor-manager');
     }
 }
