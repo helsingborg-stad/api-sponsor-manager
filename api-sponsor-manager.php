@@ -17,9 +17,9 @@ use AcfService\Implementations\NativeAcfService;
 use WpService\Implementations\NativeWpService;
 use WpUtilService\WpUtilService;
 
- // Protect agains direct file access
-if (! defined('WPINC')) {
-    die;
+// Protect agains direct file access
+if (!defined('WPINC')) {
+    die();
 }
 
 define('API_SPONSOR_MANAGER_PATH', plugin_dir_path(__FILE__));
@@ -40,16 +40,14 @@ add_action('acf/init', function () {
     $acfExportManager->setTextdomain('api-sponsor-manager');
     $acfExportManager->setExportFolder(API_SPONSOR_MANAGER_PATH . 'source/php/AcfFields/');
     $acfExportManager->autoExport(array(
-        'api-sponsor-manager-settings' => 'group_61ea7a87e8aaa' //Update with acf id here, settings view
+        'api-sponsor-manager-assignment'    => 'group_69a949c52c562',
+        'api-sponsor-manager-organization'  => 'group_69a9552f0e029',
     ));
     $acfExportManager->import();
 });
 
 $wpService = new NativeWpService();
 $wpUtilService = new WpUtilService($wpService);
-
-// Start application
-new CustomShortLinks\App();
 
 // Start application
 new ApiSponsorManager\App($wpUtilService->enqueue(__DIR__), $wpService, new NativeAcfService());
