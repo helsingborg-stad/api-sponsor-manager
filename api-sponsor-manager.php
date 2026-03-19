@@ -14,6 +14,8 @@
  */
 
 use AcfService\Implementations\NativeAcfService;
+use ApiSponsorManager\Helper\NotificationServices\FakeNotificationService;
+use ApiSponsorManager\Helper\NotificationServices\WordPressNotificationService;
 use WpService\Implementations\NativeWpService;
 use WpUtilService\WpUtilService;
 
@@ -42,6 +44,7 @@ add_action('acf/init', function () {
     $acfExportManager->autoExport(array(
         'api-sponsor-manager-assignment' => 'group_69a97690d547c',
         'api-sponsor-manager-organization' => 'group_69a9552f0e029',
+        'api-sponsor-manager-notifications' => 'group_69bbaf273446a',
     ));
     $acfExportManager->import();
 });
@@ -50,4 +53,11 @@ $wpService = new NativeWpService();
 $wpUtilService = new WpUtilService($wpService);
 
 // Start application
-new ApiSponsorManager\App($wpUtilService->enqueue(__DIR__), $wpService, new NativeAcfService());
+new ApiSponsorManager\App(
+    $wpService, 
+    new NativeAcfService(), 
+    defined('SPONSOR_MANAGER_EMAIL_SERVICE') 
+        && SPONSOR_MANAGER_EMAIL_SERVICE === 'fake' 
+        ? new FakeNotificationService() 
+        : new WordPressNotificationService($wpService)
+);

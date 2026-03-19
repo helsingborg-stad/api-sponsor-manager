@@ -6,26 +6,24 @@ namespace ApiSponsorManager;
 
 use AcfService\AcfService;
 use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
-use WpService\Contracts\AddAction;
-use WpService\Contracts\AddFilter;
-use WpService\Contracts\WpEnqueueScript;
-use WpService\Contracts\WpEnqueueStyle;
-use WpService\Contracts\WpRegisterScript;
-use WpService\Contracts\WpRegisterStyle;
-use WpUtilService\Features\Enqueue\EnqueueManager;
+use ApiSponsorManager\Helper\NotificationServices\NotificationService;
+use ApiSponsorManager\Notifications;
+use WpService\WpService;
 
 class App
 {
     public function __construct(
-        private EnqueueManager $wpEnqueue,
-        private AddFilter&AddAction&WpRegisterStyle&WpEnqueueStyle&WpRegisterScript&WpEnqueueScript $wpService,
+        private WpService $wpService,
         private AcfService $acfService,
+        private NotificationService $notificationService
     ) {
         $this->init(...[
             new Assignment\PostType($wpService),
             new Offering\PostType($wpService),
             new Activity\Taxonomy($wpService),
             new Resource\Taxonomy($wpService),
+            new OptionsPage($wpService, $acfService),
+            new Notifications($wpService, $acfService, $notificationService)
         ]);
     }
 
