@@ -14,6 +14,7 @@
  */
 
 use AcfService\Implementations\NativeAcfService;
+use ApiSponsorManager\Helper\CronScheduler\CronScheduler;
 use ApiSponsorManager\Helper\NotificationServices\FakeNotificationService;
 use ApiSponsorManager\Helper\NotificationServices\WordPressNotificationService;
 use WpService\Implementations\NativeWpService;
@@ -51,6 +52,7 @@ add_action('acf/init', function () {
 
 $wpService = new NativeWpService();
 $wpUtilService = new WpUtilService($wpService);
+$cronScheduler = new CronScheduler($wpService);
 
 // Start application
 new ApiSponsorManager\App(
@@ -59,5 +61,6 @@ new ApiSponsorManager\App(
     defined('SPONSOR_MANAGER_EMAIL_SERVICE') 
         && SPONSOR_MANAGER_EMAIL_SERVICE === 'fake' 
         ? new FakeNotificationService() 
-        : new WordPressNotificationService($wpService)
+        : new WordPressNotificationService($wpService),
+    $cronScheduler
 );
