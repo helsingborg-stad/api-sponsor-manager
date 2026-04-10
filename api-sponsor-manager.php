@@ -44,7 +44,9 @@ add_action('acf/init', function () {
     $acfExportManager->setExportFolder(API_SPONSOR_MANAGER_PATH . 'source/php/AcfFields/');
     $acfExportManager->autoExport(array(
         'api-sponsor-manager-assignment' => 'group_69a97690d547c',
-        'api-sponsor-manager-organization' => 'group_69a9552f0e029',
+        'api-sponsor-manager-company' => 'group_69a99c976cbfe',
+        'api-sponsor-manager-offering' => 'group_69a99cbe03b51',
+        'api-sponsor-manager-association' => 'group_69a9552f0e029',
         'api-sponsor-manager-notifications' => 'group_69bbaf273446a',
     ));
     $acfExportManager->import();
@@ -53,14 +55,15 @@ add_action('acf/init', function () {
 $wpService = new NativeWpService();
 $wpUtilService = new WpUtilService($wpService);
 $cronScheduler = new CronScheduler($wpService);
+$notificationService = defined('SPONSOR_MANAGER_EMAIL_SERVICE') 
+        && SPONSOR_MANAGER_EMAIL_SERVICE === 'fake' 
+        ? new FakeNotificationService() 
+        : new WordPressNotificationService($wpService);
 
 // Start application
 new ApiSponsorManager\App(
     $wpService, 
     new NativeAcfService(), 
-    defined('SPONSOR_MANAGER_EMAIL_SERVICE') 
-        && SPONSOR_MANAGER_EMAIL_SERVICE === 'fake' 
-        ? new FakeNotificationService() 
-        : new WordPressNotificationService($wpService),
+    $notificationService,
     $cronScheduler
 );
