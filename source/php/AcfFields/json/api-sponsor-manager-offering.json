@@ -4,7 +4,7 @@
     "fields": [
         {
             "key": "field_69a99cbe05b04",
-            "label": "Assignment Description",
+            "label": "Offering Description",
             "name": "description",
             "aria-label": "",
             "type": "wysiwyg",
@@ -25,7 +25,7 @@
         },
         {
             "key": "field_69a99cbe05b52",
-            "label": "Assignment Image",
+            "label": "Image",
             "name": "image",
             "aria-label": "",
             "type": "image",
@@ -51,7 +51,7 @@
         },
         {
             "key": "field_69a99cbe05b9e",
-            "label": "Assignment Date",
+            "label": "Date",
             "name": "date",
             "aria-label": "",
             "type": "date_picker",
@@ -71,7 +71,7 @@
         },
         {
             "key": "field_69a99cbe05beb",
-            "label": "Assignment Time",
+            "label": "Time",
             "name": "time",
             "aria-label": "",
             "type": "time_picker",
@@ -89,7 +89,7 @@
         },
         {
             "key": "field_69a99cbe05c39",
-            "label": "Assignment Due Date",
+            "label": "Due Date",
             "name": "due_date",
             "aria-label": "",
             "type": "date_picker",
@@ -109,7 +109,7 @@
         },
         {
             "key": "field_69a99cbe05c84",
-            "label": "Assignment Due Time",
+            "label": "Due Time",
             "name": "due_time",
             "aria-label": "",
             "type": "time_picker",
@@ -127,7 +127,7 @@
         },
         {
             "key": "field_69a99cbe05cd0",
-            "label": "Assignment Location",
+            "label": "Location",
             "name": "location",
             "aria-label": "",
             "type": "google_map",
@@ -147,7 +147,7 @@
         },
         {
             "key": "field_69a99cbe05d1a",
-            "label": "Assignment resources",
+            "label": "Resources",
             "name": "resources",
             "aria-label": "",
             "type": "taxonomy",
@@ -173,7 +173,7 @@
         },
         {
             "key": "field_69a99cbe05d65",
-            "label": "Assignment activities",
+            "label": "Activities",
             "name": "activities",
             "aria-label": "",
             "type": "taxonomy",

@@ -27,11 +27,11 @@ class PostType extends CustomPostType
 
     public function getLabelSingular(): string
     {
-        return $this->wpService->__('Sponsor Assignment', 'api-sponsor-manager');
+        return $this->wpService->__('Assignment', 'api-sponsor-manager');
     }
 
     public function getLabelPlural(): string
     {
-        return $this->wpService->__('Sponsor Assignments', 'api-sponsor-manager');
+        return $this->wpService->__('Assignments', 'api-sponsor-manager');
     }
 }

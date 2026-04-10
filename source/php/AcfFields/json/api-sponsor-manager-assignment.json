@@ -25,7 +25,7 @@
         },
         {
             "key": "field_69a985722f8b4",
-            "label": "Assignment Image",
+            "label": "Image",
             "name": "image",
             "aria-label": "",
             "type": "image",
@@ -51,7 +51,7 @@
         },
         {
             "key": "field_69a985b92f8b5",
-            "label": "Assignment Date",
+            "label": "Date",
             "name": "date",
             "aria-label": "",
             "type": "date_picker",
@@ -71,7 +71,7 @@
         },
         {
             "key": "field_69a985dc2f8b6",
-            "label": "Assignment Time",
+            "label": "Time",
             "name": "time",
             "aria-label": "",
             "type": "time_picker",
@@ -89,7 +89,7 @@
         },
         {
             "key": "field_69a987312c6d8",
-            "label": "Assignment Due Date",
+            "label": "Due Date",
             "name": "due_date",
             "aria-label": "",
             "type": "date_picker",
@@ -109,7 +109,7 @@
         },
         {
             "key": "field_69a9874b2c6d9",
-            "label": "Assignment Due Time",
+            "label": "Due Time",
             "name": "due_time",
             "aria-label": "",
             "type": "time_picker",
@@ -127,7 +127,7 @@
         },
         {
             "key": "field_69a986212c6d4",
-            "label": "Assignment Location",
+            "label": "Location",
             "name": "location",
             "aria-label": "",
             "type": "google_map",
@@ -147,7 +147,7 @@
         },
         {
             "key": "field_69a986592c6d5",
-            "label": "Assignment resources",
+            "label": "Resources",
             "name": "resources",
             "aria-label": "",
             "type": "taxonomy",
@@ -173,7 +173,7 @@
         },
         {
             "key": "field_69a986c82c6d6",
-            "label": "Assignment activities",
+            "label": "Activities",
             "name": "activities",
             "aria-label": "",
             "type": "taxonomy",

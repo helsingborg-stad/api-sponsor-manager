@@ -1,8 +1,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: API Sponsor Manager\n"
-"POT-Creation-Date: 2026-04-09 13:16+0200\n"
-"PO-Revision-Date: 2026-04-09 13:17+0200\n"
+"POT-Creation-Date: 2026-04-10 14:49+0200\n"
+"PO-Revision-Date: 2026-04-10 14:50+0200\n"
 "Last-Translator: \n"
 "Language-Team: \n"
 "Language: sv_SE\n"
@@ -18,191 +18,268 @@ msgstr ""
 "X-Poedit-SearchPath-0: .\n"
 "X-Poedit-SearchPathExcluded-0: *.js\n"
 
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:6
+msgid "Sponsor Assignment"
+msgstr "Sponsringsuppdrag"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:10
+msgid "Assignment Description"
+msgstr "Uppdragsbeskrivning"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:31
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:31
+msgid "Image"
+msgstr "Bild"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:57
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:57
+msgid "Date"
+msgstr "Datum"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:77
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:77
+msgid "Time"
+msgstr "Tid"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:95
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:95
+msgid "Due Date"
+msgstr "Förfallodatum"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:115
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:115
+msgid "Due Time"
+msgstr "Förfallotid"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:133
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:133
+msgid "Location"
+msgstr "Plats"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:153
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:153
+#: source/php/Resource/Taxonomy.php:43
+msgid "Resources"
+msgstr "Resurser"
+
+#: source/php/AcfFields/php/api-sponsor-manager-assignment.php:180
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:180
+#: source/php/Activity/Taxonomy.php:43
+msgid "Activities"
+msgstr "Aktiviteter"
+
 #: source/php/AcfFields/php/api-sponsor-manager-association.php:6
 msgid "Association"
 msgstr "Förening"
 
 #: source/php/AcfFields/php/api-sponsor-manager-association.php:10
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:10
-msgid "Name"
-msgstr "Namn"
+msgid "Association Name"
+msgstr "Förening"
 
 #: source/php/AcfFields/php/api-sponsor-manager-association.php:31
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:31
+msgid "Association Description"
+msgstr "Om föreningen"
+
+#: source/php/AcfFields/php/api-sponsor-manager-association.php:52
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:52
+msgid "Organisation Number"
+msgstr "Organisationsnummer"
+
+#: source/php/AcfFields/php/api-sponsor-manager-association.php:73
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:73
 msgid "Email"
 msgstr "E-post"
 
-#: source/php/AcfFields/php/api-sponsor-manager-association.php:51
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:51
-msgid "Description"
-msgstr "Beskrivning"
-
-#: source/php/AcfFields/php/api-sponsor-manager-association.php:72
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:72
-msgid "Contact"
-msgstr "Kontakt"
-
 #: source/php/AcfFields/php/api-sponsor-manager-association.php:93
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:93
-msgid "Website"
-msgstr "Hemsida"
-
-#: source/php/AcfFields/php/api-sponsor-manager-association.php:111
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:111
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:114
 msgid "Phone"
 msgstr "Telefonnummer"
 
-#: source/php/AcfFields/php/api-sponsor-manager-association.php:134
-#: source/php/AcfFields/php/api-sponsor-manager-company.php:134
-msgid "Organisation Number"
-msgstr "Organisationsnummer"
+#: source/php/AcfFields/php/api-sponsor-manager-association.php:116
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:93
+msgid "Contact"
+msgstr "Kontakt"
+
+#: source/php/AcfFields/php/api-sponsor-manager-association.php:137
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:137
+msgid "Website"
+msgstr "Hemsida"
 
 #: source/php/AcfFields/php/api-sponsor-manager-company.php:6
 msgid "Company"
 msgstr "Företag"
 
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:10
+msgid "Company name"
+msgstr "Företag"
+
+#: source/php/AcfFields/php/api-sponsor-manager-company.php:31
+msgid "Company Description"
+msgstr "Om företaget"
+
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:6
+msgid "Sponsor Offering"
+msgstr "Sponsringserbjudande"
+
+#: source/php/AcfFields/php/api-sponsor-manager-offering.php:10
+msgid "Offering Description"
+msgstr "Beskrivning av erbjudandet"
+
 #: source/php/Activity/Taxonomy.php:38
 msgid "Activity"
 msgstr "Aktivitet"
 
-#: source/php/Activity/Taxonomy.php:43
-msgid "Activities"
-msgstr "Aktiviteter"
-
-#: source/php/App.php:25
-msgid "hello"
-msgstr "hej"
-
-#: source/php/App.php:26
-msgid "hi"
-msgstr "hej"
-
 #: source/php/Assignment/PostType.php:30
-msgid "Sponsor Assignment"
-msgstr "Sponsringsuppdrag"
+msgid "Assignment"
+msgstr "Uppdrag"
 
 #: source/php/Assignment/PostType.php:35
-msgid "Sponsor Assignments"
-msgstr "Sponsringsuppdrag"
+msgid "Assignments"
+msgstr "Uppdrag"
 
 #: source/php/Helper/PostTypes/PostType.php:46
 #, php-format
 msgid "Add New %s"
-msgstr ""
+msgstr "Lägg till ny %s"
 
 #: source/php/Helper/PostTypes/PostType.php:47
 #: source/php/Helper/Taxonomies/Taxonomy.php:56
 #, php-format
 msgid "Add new %s"
-msgstr ""
+msgstr "Lägg till ny %s"
 
 #: source/php/Helper/PostTypes/PostType.php:48
 #: source/php/Helper/Taxonomies/Taxonomy.php:54
 #, php-format
 msgid "Edit %s"
-msgstr ""
+msgstr "Redigera %s"
 
 #: source/php/Helper/PostTypes/PostType.php:49
 #, php-format
 msgid "New %s"
-msgstr ""
+msgstr "Ny %s"
 
 #: source/php/Helper/PostTypes/PostType.php:50
 #, php-format
 msgid "View %s"
-msgstr ""
+msgstr "Visa %s"
 
 #: source/php/Helper/PostTypes/PostType.php:51
 #: source/php/Helper/Taxonomies/Taxonomy.php:49
 #, php-format
 msgid "Search %s"
-msgstr ""
+msgstr "Sök %s"
 
 #: source/php/Helper/PostTypes/PostType.php:52
 #: source/php/Helper/Taxonomies/Taxonomy.php:61
 #, php-format
 msgid "No %s found"
-msgstr ""
+msgstr "Inga %s hittades"
 
 #: source/php/Helper/PostTypes/PostType.php:53
 #, php-format
 msgid "No %s found in trash"
-msgstr ""
+msgstr "Inga %s hittades i papperskorgen"
 
 #: source/php/Helper/PostTypes/PostType.php:54
 #: source/php/Helper/Taxonomies/Taxonomy.php:53
 #, php-format
 msgid "Parent %s:"
-msgstr ""
+msgstr "Överordnad %s:"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:50
 #, php-format
 msgid "Popular %s"
-msgstr ""
+msgstr "Populära %s"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:51
 #, php-format
 msgid "All %s"
-msgstr ""
+msgstr "Alla %s"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:52
 #, php-format
 msgid "Parent %s"
-msgstr ""
+msgstr "Överordnad %s"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:55
 #, php-format
 msgid "Update %s"
-msgstr ""
+msgstr "Uppdatera %s"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:57
 #, php-format
 msgid "New %s name"
-msgstr ""
+msgstr "Nytt %s-namn"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:58
 #, php-format
 msgid "Separate %s with commas"
-msgstr ""
+msgstr "Separera %s med kommatecken"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:59
 #, php-format
 msgid "Add or remove %s"
-msgstr ""
+msgstr "Lägg till eller ta bort %s"
 
 #: source/php/Helper/Taxonomies/Taxonomy.php:60
 #, php-format
 msgid "Choose from most used %s"
-msgstr ""
+msgstr "Välj från mest använda %s"
 
 #: source/php/Offering/PostType.php:30
-msgid "Sponsor Offering"
-msgstr "Sponsringserbjudande"
+msgid "Offering"
+msgstr "Erbjudande"
 
 #: source/php/Offering/PostType.php:35
-msgid "Sponsor Offerings"
-msgstr "Sponsringserbjudanden"
+msgid "Offerings"
+msgstr "Erbjudanden"
 
 #: source/php/OptionsPage.php:25
-#, fuzzy
-#| msgid "API Sponsor Manager"
 msgid "API Sponsor Manager Settings"
-msgstr "API Sponsor Manager"
+msgstr "API Sponsor Manager Settings"
 
 #: source/php/OptionsPage.php:27
-#, fuzzy
-#| msgid "API Sponsor Manager"
 msgid "Sponsor Manager"
-msgstr "API Sponsor Manager"
+msgstr "Sponsor Manager"
 
 #: source/php/Resource/Taxonomy.php:38
 msgid "Resource"
 msgstr "Resurs"
 
-#: source/php/Resource/Taxonomy.php:43
-msgid "Resources"
-msgstr "Resurser"
-
 #: vendor/helsingborg-stad/wpservice/src/Implementations/WpServiceWithTextDomain.test.php:21
 msgid "foo"
 msgstr ""
+
+#~ msgid "Sponsor Assignments"
+#~ msgstr "Sponsringsuppdrag"
+
+#~ msgid "Name"
+#~ msgstr "Namn"
+
+#~ msgid "Tid"
+#~ msgstr "Tid"
+
+#~ msgid "Assignment Image"
+#~ msgstr "Uppdragsbild"
+
+#, fuzzy
+#~| msgid "Sponsor Assignment"
+#~ msgid "Assignment Time"
+#~ msgstr "Sponsringsuppdrag"
+
+#, fuzzy
+#~| msgid "Association"
+#~ msgid "Assignment Location"
+#~ msgstr "Förening"
+
+#, fuzzy
+#~| msgid "Activities"
+#~ msgid "Assignment activities"
+#~ msgstr "Aktiviteter"
+
+#~ msgid "hello"
+#~ msgstr "hej"
+
+#~ msgid "hi"
+#~ msgstr "hej"

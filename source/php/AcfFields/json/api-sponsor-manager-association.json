@@ -4,8 +4,50 @@
     "fields": [
         {
             "key": "field_69a9552f100b5",
-            "label": "Name",
+            "label": "Association Name",
             "name": "organization_name",
+            "aria-label": "",
+            "type": "text",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "maxlength": "",
+            "allow_in_bindings": 0,
+            "placeholder": "",
+            "prepend": "",
+            "append": ""
+        },
+        {
+            "key": "field_69a9552f10150",
+            "label": "Association Description",
+            "name": "organization_description",
+            "aria-label": "",
+            "type": "textarea",
+            "instructions": "",
+            "required": 0,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "maxlength": "",
+            "allow_in_bindings": 0,
+            "rows": "",
+            "placeholder": "",
+            "new_lines": ""
+        },
+        {
+            "key": "field_69a9552f1028a",
+            "label": "Organisation Number",
+            "name": "organization_number",
             "aria-label": "",
             "type": "text",
             "instructions": "",
@@ -44,13 +86,13 @@
             "append": ""
         },
         {
-            "key": "field_69a9552f10150",
-            "label": "Description",
-            "name": "organization_description",
+            "key": "field_69a9552f10240",
+            "label": "Phone",
+            "name": "organization_phone",
             "aria-label": "",
-            "type": "textarea",
+            "type": "number",
             "instructions": "",
-            "required": 0,
+            "required": 1,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "",
@@ -58,11 +100,13 @@
                 "id": ""
             },
             "default_value": "",
-            "maxlength": "",
+            "min": "",
+            "max": "",
             "allow_in_bindings": 0,
-            "rows": "",
             "placeholder": "",
-            "new_lines": ""
+            "step": "",
+            "prepend": "",
+            "append": ""
         },
         {
             "key": "field_69a9552f1019d",
@@ -102,50 +146,6 @@
             "default_value": "",
             "allow_in_bindings": 0,
             "placeholder": ""
-        },
-        {
-            "key": "field_69a9552f10240",
-            "label": "Phone",
-            "name": "organization_phone",
-            "aria-label": "",
-            "type": "number",
-            "instructions": "",
-            "required": 1,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "",
-                "class": "",
-                "id": ""
-            },
-            "default_value": "",
-            "min": "",
-            "max": "",
-            "allow_in_bindings": 0,
-            "placeholder": "",
-            "step": "",
-            "prepend": "",
-            "append": ""
-        },
-        {
-            "key": "field_69a9552f1028a",
-            "label": "Organisation Number",
-            "name": "organization_number",
-            "aria-label": "",
-            "type": "text",
-            "instructions": "",
-            "required": 1,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "",
-                "class": "",
-                "id": ""
-            },
-            "default_value": "",
-            "maxlength": "",
-            "allow_in_bindings": 0,
-            "placeholder": "",
-            "prepend": "",
-            "append": ""
         }
     ],
     "location": [

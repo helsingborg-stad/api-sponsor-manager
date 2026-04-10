@@ -28,7 +28,7 @@
         ),
         1 => array(
             'key' => 'field_69a985722f8b4',
-            'label' => __('Assignment Image', 'api-sponsor-manager'),
+            'label' => __('Image', 'api-sponsor-manager'),
             'name' => 'image',
             'aria-label' => '',
             'type' => 'image',
@@ -54,7 +54,7 @@
         ),
         2 => array(
             'key' => 'field_69a985b92f8b5',
-            'label' => __('Assignment Date', 'api-sponsor-manager'),
+            'label' => __('Date', 'api-sponsor-manager'),
             'name' => 'date',
             'aria-label' => '',
             'type' => 'date_picker',
@@ -74,7 +74,7 @@
         ),
         3 => array(
             'key' => 'field_69a985dc2f8b6',
-            'label' => __('Assignment Time', 'api-sponsor-manager'),
+            'label' => __('Time', 'api-sponsor-manager'),
             'name' => 'time',
             'aria-label' => '',
             'type' => 'time_picker',
@@ -92,7 +92,7 @@
         ),
         4 => array(
             'key' => 'field_69a987312c6d8',
-            'label' => __('Assignment Due Date', 'api-sponsor-manager'),
+            'label' => __('Due Date', 'api-sponsor-manager'),
             'name' => 'due_date',
             'aria-label' => '',
             'type' => 'date_picker',
@@ -112,7 +112,7 @@
         ),
         5 => array(
             'key' => 'field_69a9874b2c6d9',
-            'label' => __('Assignment Due Time', 'api-sponsor-manager'),
+            'label' => __('Due Time', 'api-sponsor-manager'),
             'name' => 'due_time',
             'aria-label' => '',
             'type' => 'time_picker',
@@ -130,7 +130,7 @@
         ),
         6 => array(
             'key' => 'field_69a986212c6d4',
-            'label' => __('Assignment Location', 'api-sponsor-manager'),
+            'label' => __('Location', 'api-sponsor-manager'),
             'name' => 'location',
             'aria-label' => '',
             'type' => 'google_map',
@@ -150,7 +150,7 @@
         ),
         7 => array(
             'key' => 'field_69a986592c6d5',
-            'label' => __('Assignment resources', 'api-sponsor-manager'),
+            'label' => __('Resources', 'api-sponsor-manager'),
             'name' => 'resources',
             'aria-label' => '',
             'type' => 'taxonomy',
@@ -177,7 +177,7 @@
         ),
         8 => array(
             'key' => 'field_69a986c82c6d6',
-            'label' => __('Assignment activities', 'api-sponsor-manager'),
+            'label' => __('Activities', 'api-sponsor-manager'),
             'name' => 'activities',
             'aria-label' => '',
             'type' => 'taxonomy',

@@ -4,8 +4,50 @@
     "fields": [
         {
             "key": "field_69a99c976f064",
-            "label": "Name",
+            "label": "Company name",
             "name": "organization_name",
+            "aria-label": "",
+            "type": "text",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "maxlength": "",
+            "allow_in_bindings": 0,
+            "placeholder": "",
+            "prepend": "",
+            "append": ""
+        },
+        {
+            "key": "field_69a99c976f0f6",
+            "label": "Company Description",
+            "name": "organization_description",
+            "aria-label": "",
+            "type": "textarea",
+            "instructions": "",
+            "required": 0,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "maxlength": "",
+            "allow_in_bindings": 0,
+            "rows": "",
+            "placeholder": "",
+            "new_lines": ""
+        },
+        {
+            "key": "field_69a99c976f213",
+            "label": "Organisation Number",
+            "name": "organization_number",
             "aria-label": "",
             "type": "text",
             "instructions": "",
@@ -44,27 +86,6 @@
             "append": ""
         },
         {
-            "key": "field_69a99c976f0f6",
-            "label": "Description",
-            "name": "organization_description",
-            "aria-label": "",
-            "type": "textarea",
-            "instructions": "",
-            "required": 0,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "",
-                "class": "",
-                "id": ""
-            },
-            "default_value": "",
-            "maxlength": "",
-            "allow_in_bindings": 0,
-            "rows": "",
-            "placeholder": "",
-            "new_lines": ""
-        },
-        {
             "key": "field_69a99c976f13e",
             "label": "Contact",
             "name": "organization_contact",
@@ -84,24 +105,6 @@
             "placeholder": "",
             "prepend": "",
             "append": ""
-        },
-        {
-            "key": "field_69a99c976f185",
-            "label": "Website",
-            "name": "organization_website",
-            "aria-label": "",
-            "type": "url",
-            "instructions": "",
-            "required": 0,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "",
-                "class": "",
-                "id": ""
-            },
-            "default_value": "",
-            "allow_in_bindings": 0,
-            "placeholder": ""
         },
         {
             "key": "field_69a99c976f1cc",
@@ -127,13 +130,13 @@
             "append": ""
         },
         {
-            "key": "field_69a99c976f213",
-            "label": "Organisation Number",
-            "name": "organization_number",
+            "key": "field_69a99c976f185",
+            "label": "Website",
+            "name": "organization_website",
             "aria-label": "",
-            "type": "text",
+            "type": "url",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "",
@@ -141,11 +144,8 @@
                 "id": ""
             },
             "default_value": "",
-            "maxlength": "",
             "allow_in_bindings": 0,
-            "placeholder": "",
-            "prepend": "",
-            "append": ""
+            "placeholder": ""
         }
     ],
     "location": [
