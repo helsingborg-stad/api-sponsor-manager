@@ -168,7 +168,7 @@
     'hide_on_screen' => '',
     'active' => true,
     'description' => '',
-    'show_in_rest' => 0,
+    'show_in_rest' => 1,
     'display_title' => '',
 ));
 }
