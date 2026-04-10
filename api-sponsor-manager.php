@@ -30,7 +30,7 @@ define('API_SPONSOR_MANAGER_URL', plugins_url('', __FILE__));
 define('API_SPONSOR_MANAGER_TEMPLATE_PATH', API_SPONSOR_MANAGER_PATH . 'templates/');
 define('API_SPONSOR_MANAGER_TEXT_DOMAIN', 'api-sponsor-manager');
 
-load_plugin_textdomain(API_SPONSOR_MANAGER_TEXT_DOMAIN, false, API_SPONSOR_MANAGER_PATH . '/languages');
+load_plugin_textdomain(API_SPONSOR_MANAGER_TEXT_DOMAIN, false, dirname(plugin_basename(__FILE__)) . '/languages');
 
 require_once API_SPONSOR_MANAGER_PATH . 'Public.php';
 
