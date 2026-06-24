@@ -31,7 +31,7 @@
         "helsingborg-stad/municipio": "^6.0.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^11.5",
+        "phpunit/phpunit": "^12.5",
         "carthage-software/mago": "^1.6"
     },
     "config": {
