@@ -168,5 +168,7 @@
     'description' => '',
     'show_in_rest' => 0,
     'display_title' => '',
+    'allow_ai_access' => false,
+    'ai_description' => '',
 ));
 }

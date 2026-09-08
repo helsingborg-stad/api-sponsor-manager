@@ -3,27 +3,6 @@
     "title": "Sponsor Offering",
     "fields": [
         {
-            "key": "field_69a99cbe05b04",
-            "label": "Offering Description",
-            "name": "description",
-            "aria-label": "",
-            "type": "wysiwyg",
-            "instructions": "",
-            "required": 1,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "",
-                "class": "",
-                "id": ""
-            },
-            "default_value": "",
-            "allow_in_bindings": 0,
-            "tabs": "all",
-            "toolbar": "full",
-            "media_upload": 1,
-            "delay": 0
-        },
-        {
             "key": "field_69a99cbe05b52",
             "label": "Image",
             "name": "image",
@@ -88,44 +67,6 @@
             "allow_in_bindings": 0
         },
         {
-            "key": "field_69a99cbe05c39",
-            "label": "Due Date",
-            "name": "due_date",
-            "aria-label": "",
-            "type": "date_picker",
-            "instructions": "",
-            "required": 1,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "50",
-                "class": "",
-                "id": ""
-            },
-            "display_format": "d\/m\/Y",
-            "return_format": "d\/m\/Y",
-            "first_day": 1,
-            "default_to_current_date": 0,
-            "allow_in_bindings": 0
-        },
-        {
-            "key": "field_69a99cbe05c84",
-            "label": "Due Time",
-            "name": "due_time",
-            "aria-label": "",
-            "type": "time_picker",
-            "instructions": "",
-            "required": 1,
-            "conditional_logic": 0,
-            "wrapper": {
-                "width": "50",
-                "class": "",
-                "id": ""
-            },
-            "display_format": "H:i:s",
-            "return_format": "H:i:s",
-            "allow_in_bindings": 0
-        },
-        {
             "key": "field_69a99cbe05cd0",
             "label": "Location",
             "name": "location",
@@ -172,6 +113,69 @@
             "bidirectional_target": []
         },
         {
+            "key": "field_69a99cbe05b04",
+            "label": "Offering Description",
+            "name": "description",
+            "aria-label": "",
+            "type": "wysiwyg",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "allow_in_bindings": 0,
+            "tabs": "all",
+            "toolbar": "full",
+            "media_upload": 1,
+            "delay": 0
+        },
+        {
+            "key": "field_6a9fe4eaa3dcf",
+            "label": "Requirements",
+            "name": "requirements",
+            "aria-label": "",
+            "type": "textarea",
+            "instructions": "Any requirements the association may have, e.g. that the sponsored party works with the UN Sustainable Development Goals, the Convention on the Rights of the Child, or similar",
+            "required": 0,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "maxlength": "",
+            "allow_in_bindings": 0,
+            "rows": "",
+            "placeholder": "",
+            "new_lines": ""
+        },
+        {
+            "key": "field_6a9fec854580c",
+            "label": "Proposal for \u201ccounter-performance\u201d from the association",
+            "name": "proposal_for_counter_performance",
+            "aria-label": "",
+            "type": "textarea",
+            "instructions": "",
+            "required": 0,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "default_value": "",
+            "maxlength": "",
+            "allow_in_bindings": 0,
+            "rows": "",
+            "placeholder": "",
+            "new_lines": ""
+        },
+        {
             "key": "field_69a99cbe05d65",
             "label": "Activities",
             "name": "activities",
@@ -196,6 +200,100 @@
             "bidirectional": 0,
             "multiple": 0,
             "bidirectional_target": []
+        },
+        {
+            "key": "field_6a9fe576d1768",
+            "label": "Tags",
+            "name": "tags",
+            "aria-label": "",
+            "type": "taxonomy",
+            "instructions": "#ALLA #SCOUTERNA etc (se h\u00e4r)",
+            "required": 0,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "taxonomy": "post_tag",
+            "add_term": 1,
+            "save_terms": 0,
+            "load_terms": 1,
+            "return_format": "id",
+            "field_type": "multi_select",
+            "allow_null": 0,
+            "allow_in_bindings": 0,
+            "bidirectional": 0,
+            "multiple": 0,
+            "bidirectional_target": []
+        },
+        {
+            "key": "field_69a99cbe05c39",
+            "label": "Due Date",
+            "name": "due_date",
+            "aria-label": "",
+            "type": "date_picker",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "50",
+                "class": "",
+                "id": ""
+            },
+            "display_format": "d\/m\/Y",
+            "return_format": "d\/m\/Y",
+            "first_day": 1,
+            "default_to_current_date": 0,
+            "allow_in_bindings": 0
+        },
+        {
+            "key": "field_69a99cbe05c84",
+            "label": "Due Time",
+            "name": "due_time",
+            "aria-label": "",
+            "type": "time_picker",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "50",
+                "class": "",
+                "id": ""
+            },
+            "display_format": "H:i:s",
+            "return_format": "H:i:s",
+            "allow_in_bindings": 0
+        },
+        {
+            "key": "field_6a9fe3b795c7b",
+            "label": "Preferred Contact Method",
+            "name": "contact_method",
+            "aria-label": "",
+            "type": "select",
+            "instructions": "",
+            "required": 1,
+            "conditional_logic": 0,
+            "wrapper": {
+                "width": "",
+                "class": "",
+                "id": ""
+            },
+            "choices": {
+                "mail": "Mail",
+                "mail-and-phone": "Mail and phone",
+                "phone": "Phone"
+            },
+            "default_value": false,
+            "return_format": "value",
+            "multiple": 0,
+            "allow_null": 0,
+            "allow_in_bindings": 0,
+            "ui": 0,
+            "ajax": 0,
+            "placeholder": "",
+            "create_options": 0,
+            "save_options": 0
         }
     ],
     "location": [
@@ -216,6 +314,8 @@
     "active": true,
     "description": "",
     "show_in_rest": 1,
-    "display_title": ""
+    "display_title": "",
+    "allow_ai_access": false,
+    "ai_description": ""
 }]
 
