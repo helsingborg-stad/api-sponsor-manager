@@ -287,12 +287,12 @@
             ),
             'choices' => array(
                 'mail' => __('Mail', 'api-sponsor-manager'),
-                'mail-and-phone' => __('Mail and phone', 'api-sponsor-manager'),
                 'phone' => __('Phone', 'api-sponsor-manager'),
             ),
-            'default_value' => false,
+            'default_value' => array(
+            ),
             'return_format' => 'value',
-            'multiple' => 0,
+            'multiple' => 1,
             'allow_null' => 0,
             'allow_in_bindings' => 0,
             'ui' => 0,
