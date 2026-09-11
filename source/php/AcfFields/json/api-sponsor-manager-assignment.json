@@ -43,7 +43,7 @@
                 "id": ""
             },
             "display_format": "d\/m\/Y",
-            "return_format": "d\/m\/Y",
+            "return_format": "Y-m-d",
             "first_day": 1,
             "default_to_current_date": 0,
             "allow_in_bindings": 0
@@ -221,7 +221,7 @@
                 "id": ""
             },
             "display_format": "d\/m\/Y",
-            "return_format": "d\/m\/Y",
+            "return_format": "Y-m-d",
             "first_day": 1,
             "default_to_current_date": 0,
             "allow_in_bindings": 0
@@ -296,4 +296,3 @@
     "allow_ai_access": false,
     "ai_description": ""
 }]
-

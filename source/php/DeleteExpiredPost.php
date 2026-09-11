@@ -37,14 +37,14 @@ class DeleteExpiredPost
 
     private function postHasExpired(int $postId): bool
     {
-        $dueDate = $this->acfService->getField('due_date', $postId); // d/m/Y
+        $dueDate = $this->acfService->getField('due_date', $postId); // Y-m-d
         $dueTime = $this->acfService->getField('due_time', $postId); // H:i:s
 
         if (empty($dueDate) || empty($dueTime)) {
             return false;
         }
 
-        $expiredAt = \DateTime::createFromFormat('d/m/Y H:i:s', $dueDate . ' ' . $dueTime);
+        $expiredAt = \DateTime::createFromFormat('Y-m-d H:i:s', $dueDate . ' ' . $dueTime);
 
         if ($expiredAt === false) {
             return false;
