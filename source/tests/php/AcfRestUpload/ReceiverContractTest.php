@@ -289,6 +289,8 @@ class ReceiverContractTest extends PluginTestCase
             ['key' => 'group_2', 'show_in_rest' => 1],
         ]);
         Functions\when('acf_get_fields')->alias(static fn ($group) => $group === 'group_1' ? [$first] : [$second]);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->returnArg(1);
         Functions\when('acf_get_field')->alias(static fn ($name) => $first);
         Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_1', 'show_in_rest' => 1]);
 
@@ -309,6 +311,186 @@ class ReceiverContractTest extends PluginTestCase
 
             $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_invalid_reference', 400);
         }
+    }
+
+    /**
+     * Regression: a same-named field in a group that is not REST exposed must
+     * not block the selection of the eligible field.
+     */
+    public function testDuplicateNameInGroupHiddenFromRestDoesNotAffectSelection(): void
+    {
+        $visible = ['key' => 'field_offer_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_visible', 'allow_multipart_rest_upload' => 1];
+        $hidden = ['key' => 'field_hidden_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_hidden', 'allow_multipart_rest_upload' => 1];
+        $postType = $this->registeredOfferingType();
+
+        Functions\when('acf_get_field_groups')->alias(static fn ($args) => ($args['post_type'] ?? null) === $postType
+            ? [
+                ['key' => 'group_visible', 'show_in_rest' => 1],
+                ['key' => 'group_hidden', 'show_in_rest' => 0],
+            ] : []);
+        Functions\when('acf_get_fields')->alias(static fn ($group) => $group === 'group_visible' ? [$visible] : [$hidden]);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_visible', 'show_in_rest' => 1]);
+
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
+
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertSame(['image' => null], $request->get_param('acf'));
+    }
+
+    /**
+     * Regression: two eligible fields with the same name must be rejected as
+     * a controlled client error, never resolved by silent first-match.
+     */
+    public function testTwoEligibleFieldsWithSameNameReturnControlledError(): void
+    {
+        $first = ['key' => 'field_offer_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_a', 'allow_multipart_rest_upload' => 1];
+        $second = ['key' => 'field_other_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_b', 'allow_multipart_rest_upload' => 1];
+        $postType = $this->registeredOfferingType();
+
+        Functions\when('acf_get_field_groups')->alias(static fn ($args) => ($args['post_type'] ?? null) === $postType
+            ? [
+                ['key' => 'group_a', 'show_in_rest' => 1],
+                ['key' => 'group_b', 'show_in_rest' => 1],
+            ] : []);
+        Functions\when('acf_get_fields')->alias(static fn ($group) => $group === 'group_a' ? [$first] : [$second]);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_a', 'show_in_rest' => 1]);
+
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
+
+        $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_invalid_reference', 400);
+    }
+
+    /**
+     * Regression: a field whose type is hidden from the REST API through the
+     * field type `show_in_rest` property must be rejected.
+     */
+    public function testFieldTypeHiddenFromRestRejectsReference(): void
+    {
+        $this->stubUploadFieldGroup();
+
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => false]);
+
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
+
+        $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_invalid_reference', 400);
+    }
+
+    /**
+     * Regression: a field removed by the `acf/rest/get_fields` filter must be
+     * rejected, and the filter must receive the ACF resource shape.
+     */
+    public function testFieldRemovedByRestGetFieldsFilterRejectsReference(): void
+    {
+        $this->stubUploadFieldGroup();
+
+        $capturedResource = null;
+        $capturedMethod = null;
+
+        Functions\when('apply_filters')->alias(static function (string $hook, array $fields, array $resource, string $httpMethod) use (&$capturedResource, &$capturedMethod): array {
+            $capturedResource = $resource;
+            $capturedMethod = $httpMethod;
+
+            return array_values(array_filter($fields, static fn (array $field): bool => ($field['name'] ?? '') !== 'image'));
+        });
+
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
+
+        $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_invalid_reference', 400);
+        self::assertSame(['type' => 'post', 'sub_type' => $this->registeredOfferingType(), 'id' => null], $capturedResource);
+        self::assertSame('POST', $capturedMethod);
+    }
+
+    /**
+     * Regression: database stored fields record the numeric group post id as
+     * parent; such a field must resolve through the group id identity.
+     */
+    public function testDatabaseBackedIntegerFieldParentIsAccepted(): void
+    {
+        $groupId = 5501;
+        $field = ['key' => 'field_db_image', 'name' => 'image', 'type' => 'image', 'parent' => $groupId, 'allow_multipart_rest_upload' => 1];
+        $group = ['key' => 'group_db', 'ID' => $groupId, 'show_in_rest' => 1];
+        $postType = $this->registeredOfferingType();
+
+        Functions\when('acf_get_field_groups')->alias(static fn ($args) => ($args['post_type'] ?? null) === $postType ? [$group] : []);
+        Functions\when('acf_get_fields')->alias(static fn (): array => [$field]);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('acf_get_field_group')->alias(static fn ($parent) => is_numeric($parent) && (int) $parent === $groupId ? $group : false);
+
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
+
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertSame(['image' => null], $request->get_param('acf'));
+    }
+
+    /**
+     * Regression: an update request with a numeric target id must resolve
+     * fields on the target post resource, and the `acf/rest/get_fields`
+     * filter must receive that resource and the actual method.
+     */
+    public function testUpdateRequestResolvesFieldsByTargetPostId(): void
+    {
+        $postType = $this->registeredOfferingType();
+        $targetId = 4402;
+        $field = ['key' => 'field_update_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_update', 'allow_multipart_rest_upload' => 1];
+        $capturedArgs = null;
+        $capturedResource = null;
+        $capturedMethod = null;
+
+        Functions\when('acf_get_field_groups')->alias(static function (array $args) use (&$capturedArgs, $targetId): array {
+            $capturedArgs = $args;
+
+            return ($args['post_id'] ?? null) === $targetId ? [['key' => 'group_update', 'show_in_rest' => 1]] : [];
+        });
+        Functions\when('acf_get_fields')->alias(static fn (): array => [$field]);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->alias(static function (string $hook, array $fields, array $resource, string $httpMethod) use (&$capturedResource, &$capturedMethod): array {
+            $capturedResource = $resource;
+            $capturedMethod = $httpMethod;
+
+            return $fields;
+        });
+        Functions\when('acf_get_field_group')->alias(static fn ($parent) => $parent === 'group_update' ? ['key' => 'group_update', 'show_in_rest' => 1] : false);
+
+        // The numeric route suffix makes this an update of post 4402, so the
+        // file reference validation must resolve fields on that post.
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()], route: "/wp/v2/sponsor-offerings/{$targetId}");
+
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertSame(['image' => null], $request->get_param('acf'));
+        self::assertSame(['post_id' => $targetId], $capturedArgs);
+        self::assertSame(['type' => 'post', 'sub_type' => $postType, 'id' => $targetId], $capturedResource);
+        self::assertSame('POST', $capturedMethod);
+    }
+
+    /**
+     * Regression: the resolved field must be the eligible field itself with
+     * its exact key; the global lookup by name must not be consulted.
+     */
+    public function testResolvedDestinationFieldKeepsItsExactKey(): void
+    {
+        $offeringField = ['key' => 'field_offer_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_offer', 'allow_multipart_rest_upload' => 1];
+        $postType = $this->registeredOfferingType();
+
+        Functions\when('acf_get_field_groups')->alias(static fn ($args) => ($args['post_type'] ?? null) === $postType
+            ? [['key' => 'group_offer', 'show_in_rest' => 1]] : []);
+        Functions\when('acf_get_fields')->alias(static fn (): array => [$offeringField]);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->returnArg(1);
+        // A global lookup by name would return a different field; the
+        // resolution must never perform it.
+        Functions\expect('acf_get_field')->never();
+
+        $method = new \ReflectionMethod(Receiver::class, 'resolveDestinationField');
+        $resolved = $method->invoke($this->receiver, $this->registeredOfferingType(), null, 'image', 'POST');
+
+        self::assertIsArray($resolved);
+        self::assertSame('field_offer_image', $resolved['key'] ?? null);
+        self::assertSame('group_offer', $resolved['parent'] ?? null);
     }
 
     public function testMissingFilePartIsAControlledClientError(): void
@@ -395,6 +577,8 @@ class ReceiverContractTest extends PluginTestCase
             static fn ($args) => ($args['post_type'] ?? null) === $postType ? [['key' => 'group_g', 'show_in_rest' => 1]] : []
         );
         Functions\when('acf_get_fields')->alias(static fn ($group) => $resolved);
+        Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
+        Functions\when('apply_filters')->returnArg(1);
         Functions\when('acf_get_field')->alias(static fn ($name) => match ($name) {
             'gallery' => $gallery,
             'image' => $primary,

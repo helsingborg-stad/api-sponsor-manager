@@ -253,7 +253,12 @@ class Receiver implements Hookable
             return $this->error('acf_rest_upload_conflicting_parts', 400, $exception->getMessage());
         }
 
-        $referenceError = $this->validateReferences($references, $target['postType']);
+        $referenceError = $this->validateReferences(
+            $references,
+            $target['postType'],
+            $target['targetPostId'],
+            strtoupper((string) $request->get_method())
+        );
 
         if ($referenceError !== null) {
             return $referenceError;
@@ -266,7 +271,7 @@ class Receiver implements Hookable
         }
 
         try {
-            $paths = $this->resolveReservedPaths($request, $references, $target['postType']);
+            $paths = $this->resolveReservedPaths($request, $references, $target['postType'], $target['targetPostId']);
         } catch (InvalidRequestException $exception) {
             return $this->error(InvalidRequestException::CODE, 400, $exception->getMessage());
         }
@@ -917,12 +922,13 @@ class Receiver implements Hookable
      * that collides with a file reference path is rejected as ambiguous.
      *
      * @param list<FileReference> $references
+     * @param int|null            $postId Target post id for updates, null for creates.
      *
      * @return array{references: list<string>, nulls: list<string>, empties: list<string>, touchedFields: list<string>, galleryFields: list<string>}
      *
      * @throws InvalidRequestException When a path violates the contract.
      */
-    private function resolveReservedPaths(WP_REST_Request $request, array $references, string $postType): array
+    private function resolveReservedPaths(WP_REST_Request $request, array $references, string $postType, ?int $postId): array
     {
         $referencePaths = [];
         $referenceSegments = [];
@@ -981,7 +987,12 @@ class Receiver implements Hookable
         $galleryFields = [];
 
         foreach ($touchedFields as $fieldName) {
-            $field = $this->resolveDestinationField($postType, $fieldName);
+            $field = $this->resolveDestinationField(
+                $postType,
+                $postId,
+                $fieldName,
+                strtoupper((string) $request->get_method())
+            );
 
             if (is_array($field) && ($field['type'] ?? null) === 'gallery') {
                 $galleryFields[] = $fieldName;
@@ -1102,25 +1113,28 @@ class Receiver implements Hookable
 
     /**
      * Validate that every file reference targets an enabled top-level ACF
-     * field of the real destination post type.
+     * field of the real destination resource.
      *
      * A reference is only accepted when its path is exactly a top-level field
      * name, or, for gallery fields, the field name followed by a single
      * numeric index. The field must be an image/file/gallery field with the
      * `allow_multipart_rest_upload` setting enabled, and it must resolve to
-     * exactly one REST exposed field group located on the destination post
-     * type. Ambiguous field names are rejected.
+     * exactly one REST exposed field group located on the destination
+     * resource. Ambiguous field names are rejected.
      *
      * @param list<FileReference> $references
+     * @param int|null            $postId     Target post id for updates, null for creates.
+     * @param string              $httpMethod The HTTP method of the request, passed to `acf/rest/get_fields`.
      */
-    private function validateReferences(array $references, string $postType): ?WP_Error
+    private function validateReferences(array $references, string $postType, ?int $postId, string $httpMethod): ?WP_Error
     {
         if ($references === []) {
             return null;
         }
 
-        if (!function_exists('acf_get_field') || !function_exists('acf_get_field_group')
-            || !function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')) {
+        if (!function_exists('acf_get_field_group')
+            || !function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')
+            || !function_exists('acf_get_field_type')) {
             return $this->invalidReferenceError();
         }
 
@@ -1142,7 +1156,7 @@ class Receiver implements Hookable
                 return $this->invalidReferenceError();
             }
 
-            $field = $this->resolveDestinationField($postType, $fieldName);
+            $field = $this->resolveDestinationField($postType, $postId, $fieldName, $httpMethod);
 
             if ($field === null) {
                 return $this->invalidReferenceError();
@@ -1173,39 +1187,54 @@ class Receiver implements Hookable
     }
 
     /**
-     * Resolve a field name against the destination post type.
+     * Resolve a field name against the destination resource.
      *
-     * The field must exist exactly once among the top-level fields of REST
-     * exposed field groups located on the post type; the global name lookup
-     * must return that same field. Anything else (missing, ambiguous, or
-     * located elsewhere) resolves to null.
+     * Updates resolve against the target post id and creates against the
+     * registered route post type; `acf_get_field_groups()` applies the ACF
+     * location rules for that resource in both cases. Only REST exposed
+     * groups are considered, only fields of a REST exposed field type pass
+     * (`show_in_rest` on the field type object), and the per group field set
+     * is run through the `acf/rest/get_fields` filter with the resource type,
+     * sub type, id and the request method, exactly as ACF does before it
+     * exposes or accepts field data.
+     *
+     * The name must exist exactly once among the eligible top-level fields;
+     * anything else (missing, hidden, filtered out, ambiguous, or located
+     * elsewhere) resolves to null. The single eligible field is returned as
+     * stored, keeping its exact field key and parent identity.
      */
-    private function resolveDestinationField(string $postType, string $fieldName): ?array
+    private function resolveDestinationField(string $postType, ?int $postId, string $fieldName, string $httpMethod): ?array
     {
         if (!function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')
-            || !function_exists('acf_get_field')) {
+            || !function_exists('acf_get_field_type')) {
             return null;
         }
 
+        // Mirrors ACF's REST lookup: updates locate groups on the concrete
+        // post, creates on the post type.
+        $groups = $postId !== null
+            ? acf_get_field_groups(['post_id' => $postId])
+            : acf_get_field_groups(['post_type' => $postType]);
+
+        $resource = [
+            'type' => 'post',
+            'sub_type' => $postType,
+            'id' => $postId,
+        ];
+
         $eligible = [];
 
-        foreach ((array) acf_get_field_groups(['post_type' => $postType]) as $group) {
+        foreach ((array) $groups as $group) {
             if (!is_array($group) || empty($group['show_in_rest']) || !is_string($group['key'] ?? null)) {
                 continue;
             }
 
-            foreach ((array) acf_get_fields($group['key']) as $field) {
-                if (!is_array($field)) {
+            foreach ($this->restExposedGroupFields((string) $group['key'], $resource, $httpMethod) as $field) {
+                if (!is_array($field) || ($field['name'] ?? null) !== $fieldName) {
                     continue;
                 }
 
-                if (($field['name'] ?? null) !== $fieldName) {
-                    continue;
-                }
-
-                // Only top-level group fields are eligible; nested sub fields
-                // belong to their parent field.
-                if (($field['parent'] ?? null) !== $group['key']) {
+                if (!$this->isTopLevelGroupField($field, $group)) {
                     continue;
                 }
 
@@ -1217,13 +1246,71 @@ class Receiver implements Hookable
             return null;
         }
 
-        $canonical = acf_get_field($fieldName);
+        return $eligible[0];
+    }
 
-        if (!is_array($canonical) || ($canonical['key'] ?? null) !== ($eligible[0]['key'] ?? null)) {
-            return null;
+    /**
+     * The REST exposed fields of a field group, exactly as ACF exposes them.
+     *
+     * Field types may hide themselves through their `show_in_rest` property
+     * and third parties may narrow the result through `acf/rest/get_fields`,
+     * which receives the resource context and the HTTP method.
+     *
+     * @param array{type: string, sub_type: string, id: int|null} $resource
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function restExposedGroupFields(string $groupKey, array $resource, string $httpMethod): array
+    {
+        $fields = [];
+
+        foreach ((array) acf_get_fields($groupKey) as $field) {
+            if (!is_array($field)) {
+                continue;
+            }
+
+            $fieldType = acf_get_field_type((string) ($field['type'] ?? ''));
+
+            if (!is_object($fieldType) || empty($fieldType->show_in_rest)) {
+                continue;
+            }
+
+            $fields[] = $field;
         }
 
-        return $canonical;
+        /**
+         * Filter the fields available to the REST API, as documented by ACF.
+         *
+         * @param array<string, mixed> $fields     The REST exposed fields of this field group.
+         * @param array                $resource   Contextual information about the current resource request.
+         * @param string               $httpMethod The HTTP method of the current request.
+         */
+        $fields = apply_filters('acf/rest/get_fields', $fields, $resource, $httpMethod);
+
+        return array_values(array_filter((array) $fields, 'is_array'));
+    }
+
+    /**
+     * Whether a field is a top-level field of the given field group.
+     *
+     * Exported groups record the group key as parent; database stored groups
+     * record the numeric group post id, so both identities are accepted.
+     * Nested sub fields belong to their parent field and are never eligible.
+     *
+     * @param array<string, mixed> $field
+     * @param array<string, mixed> $group
+     */
+    private function isTopLevelGroupField(array $field, array $group): bool
+    {
+        $parent = $field['parent'] ?? null;
+
+        if ($parent === $group['key']) {
+            return true;
+        }
+
+        $groupId = is_numeric($group['ID'] ?? null) ? (int) $group['ID'] : 0;
+
+        return $groupId > 0 && is_numeric($parent) && (int) $parent === $groupId;
     }
 
     /**
