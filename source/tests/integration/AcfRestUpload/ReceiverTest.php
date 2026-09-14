@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace ApiSponsorManager\Test\AcfRestUpload;
 
 use ApiSponsorManager\AcfRestUpload\Receiver;
+use ApiSponsorManager\Assignment\PostType as AssignmentPostType;
+use ApiSponsorManager\Offering\PostType as OfferingPostType;
 use WP_Error;
 use WP_REST_Request;
 use WP_UnitTestCase;
@@ -45,10 +47,10 @@ class ReceiverTest extends WP_UnitTestCase
             'show_in_rest' => 1,
             'location' => [
                 [
-                    ['param' => 'post_type', 'operator' => '==', 'value' => 'sponsor-offering'],
+                    ['param' => 'post_type', 'operator' => '==', 'value' => $this->registeredOfferingType()],
                 ],
                 [
-                    ['param' => 'post_type', 'operator' => '==', 'value' => 'sponsor-assignment'],
+                    ['param' => 'post_type', 'operator' => '==', 'value' => $this->registeredAssignmentType()],
                 ],
             ],
             'fields' => [
@@ -160,6 +162,30 @@ class ReceiverTest extends WP_UnitTestCase
         $method = new \ReflectionMethod(Receiver::class, 'idempotencyOptionName');
 
         return (string) $method->invoke($this->receiver, $request);
+    }
+
+    /**
+     * The registered post type names, read from the registering classes so
+     * the fixtures track the plugin registration instead of hardcoding it.
+     */
+    private function registeredAssignmentType(): string
+    {
+        return (new class extends AssignmentPostType {
+            public function __construct()
+            {
+                // getName() reads no WordPress service; skip the constructor.
+            }
+        })->getName();
+    }
+
+    private function registeredOfferingType(): string
+    {
+        return (new class extends OfferingPostType {
+            public function __construct()
+            {
+                // getName() reads no WordPress service; skip the constructor.
+            }
+        })->getName();
     }
 
     public function testRequiredImageIsRevalidatedWithRealAttachmentForBothRoutes(): void

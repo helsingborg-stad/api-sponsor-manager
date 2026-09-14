@@ -6,6 +6,8 @@ namespace ApiSponsorManager\Test\AcfRestUpload;
 
 use ApiSponsorManager\AcfRestUpload\InvalidRequestException;
 use ApiSponsorManager\AcfRestUpload\Receiver;
+use ApiSponsorManager\Assignment\PostType as AssignmentPostType;
+use ApiSponsorManager\Offering\PostType as OfferingPostType;
 use Brain\Monkey\Functions;
 use PluginTestCase\PluginTestCase;
 use WP_Error;
@@ -212,11 +214,69 @@ class ReceiverContractTest extends PluginTestCase
 
     public function testReferencesToFieldsOfOtherPostTypesAreRejected(): void
     {
-        $this->stubUploadFieldGroup(postType: 'sponsor-assignment');
+        // The group is located on the registered assignment type only, while
+        // the request targets the offerings route.
+        $this->stubUploadFieldGroup(postType: $this->registeredAssignmentType());
 
         $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
 
         $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_invalid_reference', 400);
+    }
+
+    /**
+     * Regression: the assignments route must resolve fields on the registered
+     * `assignment` post type, not on the REST base or a wrong type.
+     */
+    public function testFieldDiscoveryUsesTheRegisteredAssignmentType(): void
+    {
+        $this->stubUploadFieldGroup(postType: $this->registeredAssignmentType());
+
+        $request = $this->request(
+            ['image' => '$file:hero'],
+            ['hero' => $this->fileRecord()],
+            route: '/wp/v2/sponsor-assignments'
+        );
+
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertSame(['image' => null], $request->get_param('acf'));
+    }
+
+    /**
+     * Regression: the offerings route must resolve fields on the registered
+     * `offering` post type, not on the REST base or a wrong type.
+     */
+    public function testFieldDiscoveryUsesTheRegisteredOfferingType(): void
+    {
+        $this->stubUploadFieldGroup(postType: $this->registeredOfferingType());
+
+        $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
+
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertSame(['image' => null], $request->get_param('acf'));
+    }
+
+    /**
+     * Regression: the interrupted-claim recovery lookup must query the
+     * registered post types, so a saved resource is found on either route.
+     */
+    public function testRecoveryLookupQueriesTheRegisteredPostTypes(): void
+    {
+        $capturedArgs = null;
+
+        Functions\when('get_posts')->alias(static function (array $query) use (&$capturedArgs): array {
+            $capturedArgs = $query;
+
+            return [];
+        });
+
+        $method = new \ReflectionMethod(Receiver::class, 'findPostByIdempotencyKey');
+        $method->invoke($this->receiver, self::UUID);
+
+        self::assertIsArray($capturedArgs);
+        self::assertEqualsCanonicalizing(
+            [$this->registeredAssignmentType(), $this->registeredOfferingType()],
+            $capturedArgs['post_type'] ?? null
+        );
     }
 
     public function testAmbiguousFieldNamesAreRejected(): void
@@ -323,9 +383,10 @@ class ReceiverContractTest extends PluginTestCase
      */
     private function stubUploadFieldGroup(
         bool $withGallery = false,
-        string $postType = 'sponsor-offering',
+        ?string $postType = null,
         ?array $fields = null
     ): void {
+        $postType ??= $this->registeredOfferingType();
         $primary = ['key' => 'field_primary', 'name' => 'image', 'type' => 'image', 'parent' => 'group_g', 'allow_multipart_rest_upload' => 1];
         $gallery = ['key' => 'field_gallery', 'name' => 'gallery', 'type' => 'gallery', 'parent' => 'group_g', 'allow_multipart_rest_upload' => 1];
         $resolved = $fields ?? ($withGallery ? [$primary, $gallery] : [$primary]);
@@ -340,6 +401,30 @@ class ReceiverContractTest extends PluginTestCase
             default => false,
         });
         Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_g', 'show_in_rest' => 1]);
+    }
+
+    /**
+     * The registered post type names, read from the registering classes so
+     * the regression cases never duplicate the receiver's route map.
+     */
+    private function registeredAssignmentType(): string
+    {
+        return (new class extends AssignmentPostType {
+            public function __construct()
+            {
+                // getName() reads no WordPress service; skip the constructor.
+            }
+        })->getName();
+    }
+
+    private function registeredOfferingType(): string
+    {
+        return (new class extends OfferingPostType {
+            public function __construct()
+            {
+                // getName() reads no WordPress service; skip the constructor.
+            }
+        })->getName();
     }
 
     private function assertProtocolError(mixed $result, string $code, int $status): void

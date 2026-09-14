@@ -93,11 +93,15 @@ class Receiver implements Hookable
     /**
      * Routes that accept multipart uploads, mapped to their post type.
      *
+     * The values must be the registered post type names: WordPress fires
+     * `rest_insert_{$postType}` with the registered name and ACF locates
+     * field groups on it.
+     *
      * @var array<string, string>
      */
     private const ROUTES = [
-        '/wp/v2/sponsor-assignments' => 'sponsor-assignment',
-        '/wp/v2/sponsor-offerings' => 'sponsor-offering',
+        '/wp/v2/sponsor-assignments' => 'assignment',
+        '/wp/v2/sponsor-offerings' => 'offering',
     ];
 
     /**
