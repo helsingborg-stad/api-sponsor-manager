@@ -95,6 +95,7 @@ class Receiver implements Hookable
      *     references: list<FileReference>,
      *     files: array<string, array{name:string, type:string, tmp_name:string, error:int, size:int}>,
      *     attachments: list<int>,
+     *     needsSanitization?: bool,
      *     idempotencyOption: string|null
      * }>
      */
@@ -107,6 +108,7 @@ class Receiver implements Hookable
     {
         add_filter('rest_pre_dispatch', [$this, 'preDispatch'], 1, 3);
         add_filter('rest_request_before_callbacks', [$this, 'beforeCallbacks'], 10, 3);
+        add_filter('rest_dispatch_request', [$this, 'dispatchRequest'], 10, 4);
         add_filter('rest_post_dispatch', [$this, 'postDispatch'], 10, 3);
     }
 
@@ -216,7 +218,7 @@ class Receiver implements Hookable
     }
 
     /**
-     * Sideload the referenced binaries and replace the markers with IDs.
+     * Defer ACF validation until uploaded references have attachment IDs.
      *
      * @param mixed $response
      * @param mixed $handler
@@ -229,22 +231,33 @@ class Receiver implements Hookable
             return $response;
         }
 
-        $permissionCallback = is_array($handler) ? ($handler['permission_callback'] ?? null) : null;
+        if ($this->contexts[$contextId]['references'] === [] || !is_wp_error($response)) {
+            return $response;
+        }
 
-        if (is_callable($permissionCallback)) {
-            $permission = call_user_func($permissionCallback, $request);
+        $data = $response->get_error_data('rest_invalid_param');
+        if ($response->get_error_codes() !== ['rest_invalid_param']
+            || !is_array($data)
+            || !is_array($data['params'] ?? null)
+            || array_keys($data['params'] ?? []) !== [self::ACF_PARAM]) {
+            return $response;
+        }
 
-            if (is_wp_error($permission)) {
-                return $permission;
-            }
+        // Core skips sanitization when validation fails. Repeat it only then.
+        $this->contexts[$contextId]['needsSanitization'] = true;
 
-            if ($permission === false || $permission === null) {
-                return new WP_Error(
-                    'rest_forbidden',
-                    __('Sorry, you are not allowed to do that.', 'api-sponsor-manager'),
-                    ['status' => rest_authorization_required_code()]
-                );
-            }
+        return null;
+    }
+
+    /**
+     * Resolve uploads after core grants endpoint permission, before native saving.
+     */
+    public function dispatchRequest($response, WP_REST_Request $request, $route, $handler): mixed
+    {
+        $contextId = spl_object_id($request);
+        if ($response !== null || !isset($this->contexts[$contextId])
+            || $this->contexts[$contextId]['references'] === []) {
+            return $response;
         }
 
         $references = $this->contexts[$contextId]['references'];
@@ -303,6 +316,21 @@ class Receiver implements Hookable
         }
 
         $request->set_param(self::ACF_PARAM, $acf);
+
+        // Run the original route validators, including ACF attachment constraints.
+        $validation = $request->has_valid_params();
+        if (is_wp_error($validation)) {
+            $this->rollback($contextId);
+            return $validation;
+        }
+
+        if (!empty($this->contexts[$contextId]['needsSanitization'])) {
+            $sanitization = $request->sanitize_params();
+            if (is_wp_error($sanitization)) {
+                $this->rollback($contextId);
+                return $sanitization;
+            }
+        }
 
         return $response;
     }
