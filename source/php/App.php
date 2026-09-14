@@ -27,6 +27,8 @@ class App
             new Resource\Taxonomy($wpService),
             new OptionsPage($wpService, $acfService),
             new Notifications($wpService, $acfService, $notificationService),
+            new AcfRestUpload\FieldSettings(),
+            new AcfRestUpload\Receiver(),
             $cronScheduler
         ]);
 

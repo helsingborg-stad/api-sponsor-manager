@@ -30,6 +30,7 @@
             'mime_types' => '',
             'allow_in_bindings' => 0,
             'preview_size' => 'medium',
+            'allow_multipart_rest_upload' => true,
         ),
         1 => array(
             'key' => 'field_69a985b92f8b5',
