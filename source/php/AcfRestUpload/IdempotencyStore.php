@@ -53,12 +53,17 @@ final class IdempotencyStore
     /**
      * Build the state stored while a request holds an idempotency claim.
      *
-     * @return array{status: string, owner: string, expires_at: int, saved_post_id: int|null}
+     * status controls lock ownership; phase records progress without proving completion.
+     *
+     * @return array<string, mixed>
      */
-    public function activeState(string $owner, int $ttl): array
+    public function activeState(string $owner, int $ttl, array $scope = []): array
     {
         return [
             'status' => 'active',
+            'phase' => 'active',
+            'scope' => $scope,
+            'attachments' => [],
             'owner' => $owner,
             'expires_at' => time() + $ttl,
             'saved_post_id' => null,
@@ -237,12 +242,13 @@ final class IdempotencyStore
 
         $owner = $this->newOwner();
 
-        $complete = [
+        $complete = array_replace($current, [
             'status' => 'complete',
+            'phase' => 'complete',
             'owner' => $owner,
             'post_id' => $postId,
             'notified' => true,
-        ];
+        ]);
 
         if (!$this->casReplace($option, $current, $complete)) {
             return false;
@@ -262,12 +268,13 @@ final class IdempotencyStore
             return false;
         }
 
-        return $this->casReplace($option, $state, [
+        return $this->casReplace($option, $state, array_replace($state, [
             'status' => 'complete',
+            'phase' => 'complete',
             'owner' => $owner,
             'post_id' => $postId,
             'notified' => true,
-        ]);
+        ]));
     }
 
     /**
@@ -292,8 +299,8 @@ final class IdempotencyStore
      * Durably record the resource a claim created or targets.
      *
      * Written as a compare-and-swap as soon as the resource identity is known
-     * (the native REST insert hook), so a crash after this point lets a retry
-     * adopt the saved resource instead of creating a duplicate. A lost race
+     * (the native REST insert hook), so a crash leaves recovery evidence,
+     * not proof of completed saving. A lost race
      * leaves the identity unrecorded and fails closed.
      */
     public function tryRecordSavedPost(string $option, string $owner, int $postId): void
@@ -306,8 +313,22 @@ final class IdempotencyStore
 
         $replacement = $state;
         $replacement['saved_post_id'] = $postId;
+        $replacement['phase'] = 'inserted';
 
         $this->casReplace($option, $state, $replacement);
+    }
+
+    /** Persist recovery evidence without replacing another request's claim. */
+    public function tryRecordProgress(string $option, string $owner, string $phase, array $attachments): bool
+    {
+        $state = $this->read($option);
+        if (!$this->isOwnedActiveState($state, $owner)) {
+            return false;
+        }
+        $replacement = $state;
+        $replacement['phase'] = $phase;
+        $replacement['attachments'] = $attachments;
+        return $replacement === $state || $this->casReplace($option, $state, $replacement);
     }
 
     /**

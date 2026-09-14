@@ -39,6 +39,8 @@ use WP_REST_Response;
  *     create identity, then records the saved post id in the claim. Neither
  *     write proves native/ACF completion. Active claims survive history GC
  *     even if both writes fail.
+ *     A matching `rest_after_insert_{$postType}` records native saving, not
+ *     attachment finalization or operation completion.
  *  4. `rest_request_after_callbacks` finalizes: on success the durable
  *     identity is completed first and only then the claim is completed under
  *     the owner token, so claim completion can never outlive the identity;
@@ -183,10 +185,12 @@ class Receiver implements Hookable
      *     isCreate: bool,
      *     targetPostId: int|null,
      *     savedPostId: int|null,
+     *     nativeSaved: bool,
+     *     progressFailed: bool,
      *     touchedFields: list<string>,
      *     galleryFields: list<string>,
      *     acfSnapshot: array<string, mixed>,
-     *     insertHook: array{name: string, closure: callable}|null
+     *     insertHook: array{name: string, closure: callable, afterName: string, afterClosure: callable}|null
      * }>
      */
     private array $contexts = [];
@@ -327,6 +331,8 @@ class Receiver implements Hookable
             'isCreate' => $target['isCreate'],
             'targetPostId' => $target['targetPostId'],
             'savedPostId' => null,
+            'nativeSaved' => false,
+            'progressFailed' => false,
             'touchedFields' => $paths['touchedFields'],
             'galleryFields' => $paths['galleryFields'],
             'acfSnapshot' => [],
@@ -501,6 +507,9 @@ class Receiver implements Hookable
             }
 
             $this->contexts[$contextId]['attachments'][] = (int) $attachmentId;
+            if (!$this->recordProgress($contextId, 'active')) {
+                return $this->error('acf_rest_upload_recovery_pending', 500, 'Could not persist upload recovery information.');
+            }
 
             foreach ($paths as $path) {
                 $acf = $this->setValueAtPath($acf, BracketPath::parse($path), (int) $attachmentId);
@@ -554,6 +563,10 @@ class Receiver implements Hookable
             return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
         }
 
+        if (is_array($state) && ($state['phase'] ?? null) === 'recovery_failed') {
+            return $this->recoveryPendingResponse();
+        }
+
         if ($store->isExpiredActive($state)) {
             return $this->tryAdoptSavedResource($contextId, $store);
         }
@@ -580,7 +593,9 @@ class Receiver implements Hookable
 
         $owner = $store->newOwner();
 
-        if (!$store->tryClaim($option, $store->activeState($owner, self::ACTIVE_LOCK_TTL))) {
+        $request = $context['request'];
+        $scope = ['route' => $request->get_route(), 'method' => $request->get_method(), 'user_id' => get_current_user_id(), 'key' => $context['key']];
+        if (!$store->tryClaim($option, $store->activeState($owner, self::ACTIVE_LOCK_TTL, $scope))) {
             // A concurrent caller won the insert; re-read and answer.
             $state = $store->read($option);
 
@@ -653,8 +668,9 @@ class Receiver implements Hookable
         $context = $this->contexts[$contextId];
         $hook = 'rest_insert_' . $context['postType'];
 
-        $closure = function ($post, $restRequest, $creating) use ($contextId, $context): void {
-            if ($restRequest !== $context['request']
+        $listener = function ($post, $restRequest, $creating, bool $saved = false) use ($contextId, $context): void {
+            if (($this->contexts[$contextId]['finalized'] ?? true)
+                || $restRequest !== $context['request']
                 || !$post instanceof WP_Post
                 || $post->post_type !== $context['postType']
                 || $creating !== $context['isCreate']
@@ -662,12 +678,35 @@ class Receiver implements Hookable
                 return;
             }
 
+            if ($saved) {
+                if (($this->contexts[$contextId]['savedPostId'] ?? null) === (int) $post->ID) {
+                    $this->contexts[$contextId]['nativeSaved'] = $this->recordProgress($contextId, 'saved');
+                }
+                return;
+            }
             $this->onRestInsert($contextId, $post);
         };
 
-        add_action($hook, $closure, 10, 3);
+        $afterHook = 'rest_after_insert_' . $context['postType'];
+        $afterListener = static function ($post, $restRequest, $creating) use ($listener): void {
+            $listener($post, $restRequest, $creating, true);
+        };
+        add_action($hook, $listener, 10, 3);
+        add_action($afterHook, $afterListener, 10, 3);
 
-        $this->contexts[$contextId]['insertHook'] = ['name' => $hook, 'closure' => $closure];
+        $this->contexts[$contextId]['insertHook'] = ['name' => $hook, 'closure' => $listener, 'afterName' => $afterHook, 'afterClosure' => $afterListener];
+    }
+
+    private function recordProgress(int $contextId, string $phase): bool
+    {
+        $context = $this->contexts[$contextId];
+        $recorded = $this->idempotencyStore()->tryRecordProgress(
+            $context['idempotencyOption'], (string) $context['owner'], $phase, $context['attachments']
+        );
+        if (!$recorded) {
+            $this->contexts[$contextId]['progressFailed'] = true;
+        }
+        return $recorded;
     }
 
     /**
@@ -895,16 +934,23 @@ class Receiver implements Hookable
             return null;
         }
 
+        if ($context['owner'] !== null && (!$context['nativeSaved'] || $context['progressFailed'])) {
+            return $this->recoveryPendingResponse();
+        }
+
         $postId = $context['savedPostId'] ?? $this->resolveResponsePostId($response);
 
         if ($postId !== null && $postId > 0) {
             foreach ($context['attachments'] as $attachmentId) {
-                // A parenting failure leaves the attachment in the media
-                // library but does not invalidate the saved post.
-                wp_update_post([
+                // Parenting is part of completion, not optional cleanup.
+                $parented = wp_update_post([
                     'ID' => $attachmentId,
                     'post_parent' => $postId,
                 ], true);
+                if (is_wp_error($parented) || !$parented || (int) (get_post($attachmentId)->post_parent ?? 0) !== $postId) {
+                    $this->recoverFailure($contextId);
+                    return $this->recoveryPendingResponse();
+                }
             }
         }
 
@@ -996,9 +1042,12 @@ class Receiver implements Hookable
             }
         }
 
-        $this->contexts[$contextId]['attachments'] = [];
         $this->deleteTempFiles($contextId);
 
+        if ($recoveryFailed && $context['owner'] !== null) {
+            $this->recordProgress($contextId, 'recovery_failed');
+        }
+        $this->contexts[$contextId]['attachments'] = [];
         if (!$recoveryFailed && $context['owner'] !== null) {
             $this->idempotencyStore()->tryRelease(
                 $context['idempotencyOption'],
@@ -1038,6 +1087,7 @@ class Receiver implements Hookable
 
         if ($hook !== null) {
             remove_action($hook['name'], $hook['closure']);
+            remove_action($hook['afterName'], $hook['afterClosure']);
         }
 
         $this->contexts[$contextId]['insertHook'] = null;

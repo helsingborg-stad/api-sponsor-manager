@@ -157,7 +157,7 @@ class ReceiverIdentityTest extends PluginTestCase
         // A replay or a recovery failure must never notify; every test asserts
         // the recorded calls explicitly.
         Functions\when('do_action')->alias(function (string $hook, mixed ...$args): mixed {
-            if (str_starts_with($hook, 'rest_insert_')) {
+            if (str_starts_with($hook, 'rest_insert_') || str_starts_with($hook, 'rest_after_insert_')) {
                 $listeners = $this->insertListeners[$hook] ?? [];
                 ksort($listeners);
                 foreach ($listeners as $callbacks) {
@@ -174,7 +174,9 @@ class ReceiverIdentityTest extends PluginTestCase
 
         // A replay must never claim or touch the media library.
         Functions\expect('add_option')->never();
-        Functions\expect('media_handle_sideload')->never();
+        Functions\when('media_handle_sideload')->alias(static function (): never {
+            throw new \LogicException('Unexpected media creation.');
+        });
     }
 
     public function tearDown(): void
@@ -317,6 +319,7 @@ class ReceiverIdentityTest extends PluginTestCase
         $this->withContext($contextId, static function (array $context): array {
             $context['owner'] = 'owner-token';
             $context['savedPostId'] = 77;
+            $context['nativeSaved'] = true;
 
             return $context;
         });
@@ -353,6 +356,7 @@ class ReceiverIdentityTest extends PluginTestCase
         $this->withContext($contextId, static function (array $context): array {
             $context['owner'] = 'owner-token';
             $context['savedPostId'] = 77;
+            $context['nativeSaved'] = true;
 
             return $context;
         });
@@ -705,6 +709,7 @@ class ReceiverIdentityTest extends PluginTestCase
             self::assertNull($this->receiver->preDispatch(null, null, $request));
             self::assertNull($this->receiver->dispatchRequest(null, $request, $request->get_route(), []));
             do_action('rest_insert_offering', $post, $request, $creating);
+            do_action('rest_after_insert_offering', $post, $request, $creating);
             $response = $this->receiver->afterCallbacks(new WP_REST_Response(['id' => 77], $creating ? 201 : 200), [], $request);
             self::assertSame($creating ? 201 : 200, $response->get_status());
             $this->receiver->postDispatch($response, null, $request);
@@ -780,6 +785,7 @@ class ReceiverIdentityTest extends PluginTestCase
 
         // Native success persists the complete identity, but claim completion
         // fails. This is the only interrupted state that permits adoption.
+        do_action('rest_after_insert_offering', $post, $request, true);
         $this->wpdbFake->failUpdates = true;
         $response = $this->receiver->afterCallbacks(new WP_REST_Response(['id' => 77], 201), [], $request);
         $this->receiver->postDispatch($response, null, $request);
@@ -847,6 +853,7 @@ class ReceiverIdentityTest extends PluginTestCase
         $post = new WP_Post(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']);
         $this->existingPosts[77] = $post;
         do_action('rest_insert_offering', $post, $request, true);
+        do_action('rest_after_insert_offering', $post, $request, true);
         $response = $this->receiver->afterCallbacks(new WP_REST_Response(['id' => 77], 201), [], $request);
         $this->receiver->postDispatch($response, null, $request);
         $option = $this->idempotencyOption($request);
@@ -872,6 +879,110 @@ class ReceiverIdentityTest extends PluginTestCase
         $this->receiver->postDispatch(new WP_REST_Response([], 500), null, $otherUser);
         self::assertSame([Receiver::ACTION_AFTER_INSERT], $this->doActionCalls);
         self::assertSame(3, $this->insertCount());
+    }
+
+    public function testSavedPhaseAloneCannotReplayBeforeFinalization(): void
+    {
+        $this->wpdbFake = new ReceiverIdentityWpdb($this->rows);
+        $GLOBALS['wpdb'] = $this->wpdbFake;
+        $request = $this->request();
+        $this->receiver->preDispatch(null, null, $request);
+        $this->receiver->dispatchRequest(null, $request, $request->get_route(), []);
+        $post = new WP_Post(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']);
+        $this->existingPosts[77] = $post;
+        do_action('rest_insert_offering', $post, $request, true);
+        do_action('rest_after_insert_offering', $post, $request, true);
+        $option = $this->idempotencyOption($request);
+        $this->rows->rows[$option]['expires_at'] = time() - 1;
+        $retry = $this->request();
+        $this->receiver->preDispatch(null, null, $retry);
+        self::assertSame(425, $this->receiver->dispatchRequest(null, $retry, $retry->get_route(), [])->get_status());
+        self::assertSame('saved', $this->rows->rows[$option]['phase']);
+        self::assertSame('unresolved', $this->meta[77][Receiver::META_CREATE_IDENTITY]['status']);
+        self::assertSame(1, $this->insertCount());
+        $this->assertNoNotification();
+    }
+
+    public function testUploadRecoveryEvidenceSurvivesFailedCompensation(): void
+    {
+        $this->wpdbFake = new ReceiverIdentityWpdb($this->rows);
+        $GLOBALS['wpdb'] = $this->wpdbFake;
+        $request = new class('POST', '/wp/v2/sponsor-offerings') extends WP_REST_Request {
+            public function has_valid_params(): bool { return true; }
+        };
+        $request->set_header('X-ACF-Rest-Upload-Version', '1');
+        $request->set_header('Idempotency-Key', self::UUID);
+        $request->set_body_params(['acf' => ['image' => '$file:hero']]);
+        $request->set_file_params(['_acf_rest_files' => ['hero' => [
+            'name' => 'photo.jpg', 'type' => 'image/jpeg', 'tmp_name' => sys_get_temp_dir() . '/missing-upload-' . bin2hex(random_bytes(16)),
+            'error' => UPLOAD_ERR_OK, 'size' => 5,
+        ]]]);
+        $group = ['key' => 'group_image', 'show_in_rest' => 1];
+        $field = ['key' => 'field_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_image', 'allow_multipart_rest_upload' => 1];
+        Functions\when('acf_get_field_groups')->justReturn([$group]);
+        Functions\when('acf_get_field_group')->justReturn($group);
+        Functions\when('acf_get_fields')->justReturn([$field]);
+        Functions\when('acf_get_field_type')->justReturn((object) ['show_in_rest' => true]);
+        Functions\when('apply_filters')->alias(static fn (string $hook, mixed $value): mixed => $value);
+        Functions\when('media_handle_sideload')->justReturn(901);
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertNull($this->receiver->dispatchRequest(null, $request, $request->get_route(), []));
+        $option = $this->idempotencyOption($request);
+        self::assertSame([901], $this->rows->rows[$option]['attachments']);
+        $post = new WP_Post(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']);
+        $this->existingPosts[77] = $post;
+        do_action('rest_insert_offering', $post, $request, true);
+        do_action('rest_after_insert_offering', $post, $request, true);
+        Functions\expect('wp_update_post')->once()->with(['ID' => 901, 'post_parent' => 77], true)
+            ->andReturn(new \WP_Error('parent_failed', 'Parenting failed.'));
+        Functions\expect('wp_delete_post')->once()->with(77, true)->andReturn(false);
+        Functions\expect('wp_delete_attachment')->once()->with(901, true)->andReturn(false);
+        self::assertSame(425, $this->receiver->afterCallbacks(new WP_REST_Response(['id' => 77], 201), [], $request)->get_status());
+        self::assertSame('recovery_failed', $this->rows->rows[$option]['phase']);
+        self::assertSame([901], $this->rows->rows[$option]['attachments']);
+        self::assertSame('unresolved', $this->meta[77][Receiver::META_CREATE_IDENTITY]['status']);
+        $this->assertNoNotification();
+    }
+
+    public function testInterruptedOperationRetainsItsPhaseAndScope(): void
+    {
+        $this->wpdbFake = new ReceiverIdentityWpdb($this->rows);
+        $GLOBALS['wpdb'] = $this->wpdbFake;
+        $request = $this->request();
+        $this->receiver->preDispatch(null, null, $request);
+        self::assertNull($this->receiver->dispatchRequest(null, $request, $request->get_route(), []));
+        $option = $this->idempotencyOption($request);
+        self::assertSame('active', $this->rows->rows[$option]['phase'] ?? null);
+        self::assertSame(['route' => '/wp/v2/sponsor-offerings', 'method' => 'POST', 'user_id' => 1, 'key' => self::UUID], $this->rows->rows[$option]['scope']);
+        self::assertSame([], $this->rows->rows[$option]['attachments']);
+        $post = new WP_Post(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']);
+        $this->existingPosts[77] = $post;
+        do_action('rest_insert_offering', $post, $request, true);
+        self::assertSame('inserted', $this->rows->rows[$option]['phase']);
+        $this->rows->rows[$option]['expires_at'] = time() - 1;
+        $retry = $this->request();
+        $this->receiver->preDispatch(null, null, $retry);
+        $response = $this->receiver->dispatchRequest(null, $retry, $retry->get_route(), []);
+        self::assertSame(425, $response->get_status());
+        self::assertSame(1, $this->insertCount());
+        $this->assertNoNotification();
+
+        do_action('rest_after_insert_offering', $post, clone $request, true);
+        self::assertSame('inserted', $this->rows->rows[$option]['phase']);
+        do_action('rest_after_insert_offering', $post, $request, true);
+        self::assertSame('saved', $this->rows->rows[$option]['phase']);
+        $this->receiver->postDispatch($response, null, $retry);
+        Functions\when('wp_delete_post')->justReturn(false);
+        $failure = new WP_REST_Response([], 500);
+        $this->receiver->postDispatch($failure, null, $request);
+        self::assertSame('recovery_failed', $this->rows->rows[$option]['phase']);
+        self::assertSame(77, $this->rows->rows[$option]['saved_post_id']);
+        $again = $this->request();
+        $this->receiver->preDispatch(null, null, $again);
+        self::assertSame(425, $this->receiver->dispatchRequest(null, $again, $again->get_route(), [])->get_status());
+        self::assertSame([], $this->insertListeners['rest_insert_offering'][10]);
+        self::assertSame([], $this->insertListeners['rest_after_insert_offering'][10]);
+        $this->assertNoNotification();
     }
 
     public function testInsertListenerIgnoresAnEquivalentButDifferentRequest(): void
@@ -943,6 +1054,7 @@ class ReceiverIdentityTest extends PluginTestCase
         self::assertSame(['22222222-2222-4222-8222-222222222222'], $this->meta[88][Receiver::META_KEYS]);
 
         $nestedResponse = new WP_REST_Response(['id' => 88], 201);
+        do_action('rest_after_insert_offering', $nestedPost, $nested, true);
         self::assertSame($nestedResponse, $this->receiver->afterCallbacks($nestedResponse, [], $nested));
         $this->receiver->postDispatch($nestedResponse, null, $nested);
         self::assertCount(1, $this->insertListeners['rest_insert_offering'][10]);
@@ -955,6 +1067,9 @@ class ReceiverIdentityTest extends PluginTestCase
         $response = $failOuter
             ? new \WP_Error('native_save_failed', 'Saving failed.', ['status' => 500])
             : new WP_REST_Response(['id' => 77], 201);
+        if (!$failOuter) {
+            do_action('rest_after_insert_offering', $outerPost, $outer, true);
+        }
         self::assertSame($response, $this->receiver->afterCallbacks($response, [], $outer));
         self::assertSame([], $this->insertListeners['rest_insert_offering'][10]);
         self::assertSame($failOuter ? [77] : [], $deleted);
@@ -997,6 +1112,7 @@ class ReceiverIdentityTest extends PluginTestCase
             $identity = $this->meta[77][Receiver::META_CREATE_IDENTITY];
             self::assertSame($this->idempotencyOption($this->request()), $identity['option']);
             $response = new WP_REST_Response(['id' => 77], $creating ? 201 : 200);
+            do_action('rest_after_insert_offering', $post, $request, $creating);
             // Exercise the safety-net finalization without afterCallbacks.
             self::assertSame($response, $this->receiver->postDispatch($response, null, $request));
             self::assertSame([], $this->insertListeners['rest_insert_offering'][10]);
