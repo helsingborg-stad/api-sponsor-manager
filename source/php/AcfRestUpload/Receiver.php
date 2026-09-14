@@ -178,6 +178,7 @@ class Receiver implements Hookable
      *     key: string,
      *     idempotencyOption: string,
      *     owner: string|null,
+     *     request: WP_REST_Request,
      *     postType: string,
      *     isCreate: bool,
      *     targetPostId: int|null,
@@ -313,6 +314,7 @@ class Receiver implements Hookable
         $request->set_param(self::ACF_PARAM, $acf);
 
         $this->contexts[spl_object_id($request)] = [
+            'request' => $request,
             'references' => $references,
             'files' => $files,
             'attachments' => [],
@@ -648,9 +650,18 @@ class Receiver implements Hookable
      */
     private function registerInsertHook(int $contextId): void
     {
-        $hook = 'rest_insert_' . $this->contexts[$contextId]['postType'];
+        $context = $this->contexts[$contextId];
+        $hook = 'rest_insert_' . $context['postType'];
 
-        $closure = function ($post, $restRequest, $creating) use ($contextId): void {
+        $closure = function ($post, $restRequest, $creating) use ($contextId, $context): void {
+            if ($restRequest !== $context['request']
+                || !$post instanceof WP_Post
+                || $post->post_type !== $context['postType']
+                || $creating !== $context['isCreate']
+                || (!$context['isCreate'] && (int) $post->ID !== $context['targetPostId'])) {
+                return;
+            }
+
             $this->onRestInsert($contextId, $post);
         };
 
