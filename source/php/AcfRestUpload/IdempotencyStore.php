@@ -17,8 +17,13 @@ namespace ApiSponsorManager\AcfRestUpload;
  * closed, so a stale contender can never clobber a fresh owner and exactly one
  * caller can move an expired claim to complete/notified.
  *
- * The only non-CAS write is the initial fresh claim, which uses add_option()
- * and is arbitrated by the unique option_name index.
+ * The only non-CAS write is the initial fresh claim, which is an
+ * insert-only INSERT through $wpdb: the unique option_name index decides
+ * the race, a losing contender's insert is rejected with a duplicate key
+ * error, and no contender ever replaces another owner's row. add_option()
+ * is not an acquisition primitive: it executes
+ * "INSERT ... ON DUPLICATE KEY UPDATE", which in the race window
+ * overwrites the winner's claim and reports success.
  *
  * Remaining boundary: the CAS guarantees process concurrency correctness. A
  * strict crash-safe exactly-once delivery (for example of the completion
@@ -136,10 +141,51 @@ final class IdempotencyStore
 
     /**
      * Attempt an atomic fresh claim. Only the first concurrent caller wins.
+     *
+     * The claim is acquired with an insert-only INSERT through $wpdb: the
+     * unique option_name index arbitrates the race, and the database
+     * rejects a losing contender's insert with a duplicate key error
+     * instead of replacing the winner's row.
+     *
+     * Returns true only when this request inserted the row. A duplicate
+     * key (another owner won) and a database failure both return false,
+     * and both fail closed: an existing owner's row is never replaced.
+     * The two stay distinguishable afterwards: after a duplicate the row
+     * exists with the winner's bytes and $wpdb->last_error reports the
+     * duplicate key; after a database failure no row was written.
+     *
+     * A duplicate key is normal contention, so the error display of this
+     * one statement is suppressed while the diagnostics stay recorded on
+     * $wpdb->last_error; the prior suppression state is always restored.
      */
     public function tryClaim(string $option, array $state): bool
     {
-        return add_option($option, $state, '', 'no');
+        $wpdb = $this->wpdb();
+
+        if ($wpdb === null || !isset($wpdb->options)) {
+            return false;
+        }
+
+        $previousSuppress = $wpdb->suppress_errors(true);
+
+        try {
+            $inserted = $wpdb->query($wpdb->prepare(
+                "INSERT INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, %s)",
+                $option,
+                serialize($state),
+                'no'
+            ));
+        } finally {
+            $wpdb->suppress_errors($previousSuppress);
+        }
+
+        // The attempt may have won in another process, and this process's
+        // option caches (notoptions in particular) may still claim the
+        // option is absent, so invalidate them on every outcome, matching
+        // what the options API invalidates.
+        $this->invalidateOptionCaches($option);
+
+        return (int) $inserted === 1;
     }
 
     /**

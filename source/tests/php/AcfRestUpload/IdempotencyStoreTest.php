@@ -28,15 +28,9 @@ class IdempotencyStoreTest extends PluginTestCase
         Functions\expect('get_option')->zeroOrMoreTimes()->andReturnUsing(function ($name, $default = false) {
             return $this->rows->rows[$name] ?? $default;
         });
-        Functions\expect('add_option')->zeroOrMoreTimes()->andReturnUsing(function ($name, $value, $deprecated = '', $autoload = null) {
-            if (array_key_exists($name, $this->rows->rows)) {
-                return false;
-            }
-
-            $this->rows->rows[$name] = $value;
-
-            return true;
-        });
+        // The fresh claim is an insert-only $wpdb insert: add_option must
+        // never be called. The expectation is verified at test teardown.
+        Functions\expect('add_option')->never();
         Functions\expect('update_option')->zeroOrMoreTimes()->andReturnUsing(function ($name, $value, $autoload = null) {
             $this->rows->rows[$name] = $value;
 
@@ -97,6 +91,61 @@ class IdempotencyStoreTest extends PluginTestCase
 
         self::assertFalse($this->store->tryClaim('opt', $this->store->activeState('owner-b', 60)));
         self::assertSame('owner-a', $this->option('opt')['owner']);
+    }
+
+    public function testClaimAcquisitionIsInsertOnly(): void
+    {
+        self::assertTrue($this->store->tryClaim('opt', $this->store->activeState('owner-a', 60)));
+
+        $inserts = array_filter(
+            $this->wpdb->queries,
+            static fn (string $query): bool => str_contains($query, 'INSERT INTO')
+        );
+
+        self::assertNotEmpty($inserts);
+
+        foreach ($inserts as $insert) {
+            self::assertStringNotContainsString('ON DUPLICATE KEY UPDATE', $insert);
+            self::assertStringNotContainsString('INSERT IGNORE', $insert);
+        }
+    }
+
+    public function testClaimLoserNeverReplacesTheWinnersRow(): void
+    {
+        $winner = $this->store->activeState('owner-winner', 60);
+
+        // Contender A acquires the claim ...
+        self::assertTrue($this->store->tryClaim('opt', $winner));
+
+        // ... contender B observed absence before that insert happened and
+        // only now tries to acquire: its insert is rejected as a duplicate
+        // key instead of updating the winner's row.
+        self::assertFalse($this->store->tryClaim('opt', $this->store->activeState('owner-loser', 60)));
+
+        self::assertSame($winner, $this->option('opt'));
+        self::assertSame('owner-winner', $this->option('opt')['owner']);
+        self::assertStringContainsString('Duplicate entry', $this->wpdb->last_error);
+    }
+
+    public function testClaimDatabaseFailureIsDistinguishableFromADuplicate(): void
+    {
+        // Database failure: the claim is not acquired, nothing is written,
+        // and wpdb records the failed statement.
+        $this->wpdb->failQuery = true;
+
+        self::assertFalse($this->store->tryClaim('opt', $this->store->activeState('owner-a', 60)));
+        self::assertArrayNotHasKey('opt', $this->rows->rows);
+        self::assertSame('simulated database failure', $this->wpdb->last_error);
+
+        // Duplicate: also not acquired, but the winner's row exists and
+        // stays byte-identical, with a duplicate key error on wpdb.
+        $this->wpdb->failQuery = false;
+        $winner = $this->store->activeState('owner-winner', 60);
+
+        self::assertTrue($this->store->tryClaim('opt', $winner));
+        self::assertFalse($this->store->tryClaim('opt', $this->store->activeState('owner-loser', 60)));
+        self::assertSame($winner, $this->option('opt'));
+        self::assertStringContainsString('Duplicate entry', $this->wpdb->last_error);
     }
 
     public function testActiveStateCarriesExpiry(): void
@@ -299,10 +348,12 @@ class IdempotencyStoreTest extends PluginTestCase
 
         unset($GLOBALS['wpdb']);
 
-        // Fresh claims (add_option) keep working ...
-        self::assertTrue($this->store->tryClaim('fresh', $this->store->activeState('owner-a', 60)));
+        // Fresh claims are insert-only $wpdb statements and fail closed
+        // without wpdb ...
+        self::assertFalse($this->store->tryClaim('fresh', $this->store->activeState('owner-a', 60)));
+        self::assertArrayNotHasKey('fresh', $this->rows->rows);
 
-        // ... but no ownership-sensitive transition may succeed without the
+        // ... and no ownership-sensitive transition may succeed without the
         // compare-and-swap primitive: all fail closed instead of a fatal.
         self::assertFalse($this->store->tryComplete('owned', 'owner-a', 7));
         self::assertFalse($this->store->tryRelease('owned', 'owner-a'));
@@ -371,9 +422,11 @@ final class InMemoryOptionRows
 }
 
 /**
- * Minimal wpdb emulator: applies the store's conditional UPDATE/DELETE
- * statements against the shared rows with MySQL affected-rows semantics
- * (one affected row on byte match with a changed value, zero otherwise).
+ * Minimal wpdb emulator: applies the store's INSERT and conditional
+ * UPDATE/DELETE statements against the shared rows with MySQL semantics
+ * (a duplicate-key insert fails with last_error instead of updating the
+ * existing row, one affected row on byte match with a changed value, zero
+ * otherwise).
  */
 final class FakeWpdb
 {
@@ -381,11 +434,30 @@ final class FakeWpdb
 
     public bool $failQuery = false;
 
+    public string $last_error = '';
+
+    public bool $suppress_errors = false;
+
+    /** @var list<string> */
+    public array $queries = [];
+
     /** @var callable|null fn(string $type, string $option): void */
     public $onQuery;
 
     public function __construct(private readonly InMemoryOptionRows $rows)
     {
+    }
+
+    /**
+     * Mirror wpdb::suppress_errors(): it toggles the error display flag
+     * only and returns the previous state; last_error stays recorded.
+     */
+    public function suppress_errors(bool $suppress = true): bool
+    {
+        $previous = $this->suppress_errors;
+        $this->suppress_errors = $suppress;
+
+        return $previous;
     }
 
     public function prepare(string $query, mixed ...$args): string
@@ -395,7 +467,12 @@ final class FakeWpdb
 
     public function query(string $prepared): int|false
     {
+        $this->last_error = '';
+        $this->queries[] = $prepared;
+
         if ($this->failQuery) {
+            $this->last_error = 'simulated database failure';
+
             return false;
         }
 
@@ -404,10 +481,19 @@ final class FakeWpdb
         $sql = (string) $decoded['sql'];
         $args = $decoded['args'];
 
-        $type = str_contains($sql, 'UPDATE') ? 'UPDATE' : (str_contains($sql, 'DELETE FROM') ? 'DELETE' : 'UNKNOWN');
+        $type = match (true) {
+            str_contains($sql, 'INSERT INTO') => 'INSERT',
+            str_contains($sql, 'UPDATE') => 'UPDATE',
+            str_contains($sql, 'DELETE FROM') => 'DELETE',
+            default => 'UNKNOWN',
+        };
 
         if ($type === 'UNKNOWN') {
             return 0;
+        }
+
+        if ($type === 'INSERT') {
+            return $this->insert($sql, $args);
         }
 
         if ($type === 'UPDATE') {
@@ -444,6 +530,38 @@ final class FakeWpdb
         }
 
         $this->rows->rows[(string) $option] = unserialize((string) $newValue);
+
+        return 1;
+    }
+
+    /**
+     * Emulate a plain insert-only INSERT against the unique option_name
+     * key: a duplicate fails with a duplicate key error (last_error, false)
+     * and never touches the existing row; any upsert clause is rejected.
+     *
+     * @param list<mixed> $args
+     */
+    private function insert(string $sql, array $args): int|false
+    {
+        if (str_contains($sql, 'ON DUPLICATE KEY UPDATE') || str_contains($sql, 'INSERT IGNORE')) {
+            throw new RuntimeException('Claim acquisition must be insert-only');
+        }
+
+        /** @var list<string> $args */
+        [$option, $serializedValue] = $args;
+        $option = (string) $option;
+
+        if (is_callable($this->onQuery)) {
+            ($this->onQuery)('INSERT', $option);
+        }
+
+        if (array_key_exists($option, $this->rows->rows)) {
+            $this->last_error = "Duplicate entry '{$option}' for key 'option_name'";
+
+            return false;
+        }
+
+        $this->rows->rows[$option] = unserialize((string) $serializedValue);
 
         return 1;
     }
