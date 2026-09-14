@@ -395,8 +395,7 @@ class IdempotencyStoreTest extends PluginTestCase
         self::assertFalse($this->option('done'));
         self::assertNotFalse($this->option('live'));
 
-        // A pruned live claim survives the conditional delete; an expired one
-        // is removed.
+        // Active claims survive pruning, even after expiry.
         $this->setOption('expired', $this->activeState('owner-x', -10));
 
         $store->trackClaim('expired'); // prunes "live", which survives
@@ -408,6 +407,36 @@ class IdempotencyStoreTest extends PluginTestCase
 
         self::assertSame(['expired', 'filler'], $this->rows->rows['acf_rest_upload_history']);
         self::assertFalse($this->option('newest'));
+    }
+
+    public function testHistoryPruneNeverDeletesUnresolvedClaims(): void
+    {
+        $store = new IdempotencyStore(IdempotencyStore::DEFAULT_HISTORY_OPTION, 2);
+
+        // An interrupted (or recovery-failed) request left an expired claim
+        // with a recorded resource; another failed to record its resource.
+        $this->setOption('unresolved', $this->activeState('owner-a', -10, ['saved_post_id' => 12]));
+        $this->setOption('reclaimable', $this->activeState('owner-b', -10));
+        $this->setOption('done', ['status' => 'complete', 'post_id' => 1]);
+
+        $store->trackClaim('unresolved'); // history: [unresolved]
+        $store->trackClaim('reclaimable'); // history: [unresolved, reclaimable]
+        $store->trackClaim('done'); // overflow prunes "unresolved", which survives
+
+        self::assertSame(['reclaimable', 'done'], $this->rows->rows['acf_rest_upload_history']);
+        self::assertSame(12, $this->option('unresolved')['saved_post_id']);
+
+        $store->trackClaim('filler'); // no resource id does not prove no side effects
+
+        self::assertSame(['done', 'filler'], $this->rows->rows['acf_rest_upload_history']);
+        self::assertNotFalse($this->option('reclaimable'));
+        self::assertNotFalse($this->option('unresolved'));
+
+        $store->trackClaim('filler2'); // prunes "done", which is deleted
+
+        self::assertSame(['filler', 'filler2'], $this->rows->rows['acf_rest_upload_history']);
+        self::assertFalse($this->option('done'));
+        self::assertNotFalse($this->option('unresolved'));
     }
 }
 

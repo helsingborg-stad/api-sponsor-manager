@@ -317,8 +317,12 @@ final class IdempotencyStore
      * The history list itself is plain GC bookkeeping and is updated with
      * update_option(). The prune deletions are ownership-sensitive and run as
      * compare-and-swap deletes: a pruned claim is only removed when it still
-     * stores exactly the observed finished or expired state; a claim that was
-     * taken over in the meantime survives.
+     * stores exactly the observed state; a claim that was taken over in the
+     * meantime survives.
+     *
+     * Only completed claims can be deleted as history. Active claims remain
+     * recovery evidence even after expiry: recording the saved post may have
+     * failed, so an absent resource ID does not prove the absence of effects.
      */
     public function trackClaim(string $option): void
     {
@@ -346,7 +350,7 @@ final class IdempotencyStore
                 continue;
             }
 
-            if ($this->isComplete($state) || $this->isExpiredActive($state)) {
+            if ($this->isComplete($state)) {
                 $this->casDelete($name, $state);
             }
         }
