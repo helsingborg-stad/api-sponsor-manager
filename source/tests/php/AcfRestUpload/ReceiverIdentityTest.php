@@ -157,6 +157,9 @@ class ReceiverIdentityTest extends PluginTestCase
         // A replay or a recovery failure must never notify; every test asserts
         // the recorded calls explicitly.
         Functions\when('do_action')->alias(function (string $hook, mixed ...$args): mixed {
+            if (in_array($hook, [Receiver::ACTION_BEGIN_OPERATION, Receiver::ACTION_END_OPERATION], true)) {
+                return null;
+            }
             if (str_starts_with($hook, 'rest_insert_') || str_starts_with($hook, 'rest_after_insert_')) {
                 $listeners = $this->insertListeners[$hook] ?? [];
                 ksort($listeners);

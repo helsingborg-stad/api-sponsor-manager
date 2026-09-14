@@ -144,11 +144,8 @@ X-ACF-Rest-Upload-Version: 1
 - Every ownership-sensitive claim transition (takeover, adoption, completion,
   release) is a database-level compare-and-swap on the exact stored claim
   state, so concurrent senders of the same key serialize on the row and all
-  losers fail closed to replays or 425; only the transition winner fires the
-  completion action. Strict crash-safe exactly-once delivery (for example of
-  that notification) would additionally require a durable outbox: the CAS is
-  robust for process concurrency, not for a crash between the database commit
-  and an in-flight send.
+  losers fail closed to replays or 425. Only the transition winner attempts
+  the completion action. The durable attempt is not confirmation of delivery.
 - On failure the receiver deletes the draft it created, restores overwritten
   ACF values of updates, and deletes only the attachments this request
   created — old and shared attachments are never removed.
@@ -171,11 +168,25 @@ X-ACF-Rest-Upload-Version: 1
 
 ### Notifications
 
-After a protocol request fully succeeded natively, the receiver fires the
-action `AcfRestUpload/afterInsertPost` (post id as first argument) exactly
-once per idempotency key — never on replays. Sponsor notification emails are
-flushed from this action; the frontend-form database path keeps its own
-`ModularityFrontendForm/afterInsertPost` completion action.
+After a protocol request fully succeeds, the receiver attempts
+`AcfRestUpload/afterInsertPost` with the post ID and scoped operation option.
+Replays do not fire this action. Finalization runs at the last filter priority,
+after ordinary REST response filters, for both internal and HTTP dispatch.
+
+Sponsor notifications keep pending templates by operation and post. Both
+submission and publish mail wait for full protocol success. A failed operation
+discards its pending batch. Completed batches send only to that post's
+recipients and are consumed through an atomic durable delivery claim.
+
+Delivery is **at most once**, not exactly once. A crash after the completion
+or delivery claim can lose an email, including remaining messages in a batch.
+`completion_attempted` and `delivery_attempted` record attempts, not confirmed
+delivery. A new process cannot repeat a claimed batch. No automatic outbox
+recovery is provided.
+
+The frontend-form Database path keeps its own
+`ModularityFrontendForm/afterInsertPost` action. It consumes only the queue for
+the supplied post ID. Non-protocol publish behavior remains unchanged.
 
 ## Testing
 

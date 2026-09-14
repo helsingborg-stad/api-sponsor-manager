@@ -134,11 +134,13 @@ class Receiver implements Hookable
     private const UPLOAD_FIELD_TYPES = ['image', 'file', 'gallery'];
 
     /**
-     * Action fired after a protocol request fully succeeded natively, exactly
+     * Action attempted after a protocol request fully succeeded, at most
      * once per idempotency key. Sponsor specific consumers hook this action;
      * the receiver itself owns no sponsor policy.
      */
     public const ACTION_AFTER_INSERT = 'AcfRestUpload/afterInsertPost';
+    public const ACTION_BEGIN_OPERATION = 'AcfRestUpload/beginOperation';
+    public const ACTION_END_OPERATION = 'AcfRestUpload/endOperation';
 
     /**
      * Post meta that stores the bounded recent list of idempotency keys a
@@ -205,8 +207,8 @@ class Receiver implements Hookable
         add_filter('rest_pre_dispatch', [$this, 'preDispatch'], 1, 3);
         add_filter('rest_request_before_callbacks', [$this, 'beforeCallbacks'], 10, 3);
         add_filter('rest_dispatch_request', [$this, 'dispatchRequest'], 10, 4);
-        add_filter('rest_request_after_callbacks', [$this, 'afterCallbacks'], 10, 3);
-        add_filter('rest_post_dispatch', [$this, 'postDispatch'], 10, 3);
+        add_filter('rest_request_after_callbacks', [$this, 'afterCallbacks'], PHP_INT_MAX, 3);
+        add_filter('rest_post_dispatch', [$this, 'postDispatch'], PHP_INT_MAX, 3);
     }
 
     /**
@@ -439,11 +441,7 @@ class Receiver implements Hookable
         $contextId = spl_object_id($request);
 
         if (isset($this->contexts[$contextId])) {
-            $replacement = $this->finalize($contextId, $response);
-
-            if ($replacement !== null) {
-                $response = $replacement;
-            }
+            return $this->postDispatch($response, null, $request);
         }
 
         return $response;
@@ -460,13 +458,15 @@ class Receiver implements Hookable
         $contextId = spl_object_id($request);
 
         if (isset($this->contexts[$contextId])) {
-            $replacement = $this->finalize($contextId, $response);
-
-            if ($replacement !== null) {
-                $response = $replacement;
+            $context = $this->contexts[$contextId];
+            try {
+                $response = $this->finalize($contextId, $response) ?? $response;
+            } finally {
+                unset($this->contexts[$contextId]);
+                if ($context['owner'] !== null) {
+                    do_action(self::ACTION_END_OPERATION, $context['idempotencyOption'], $request);
+                }
             }
-
-            unset($this->contexts[$contextId]);
         }
 
         return $response;
@@ -634,6 +634,7 @@ class Receiver implements Hookable
     {
         $this->contexts[$contextId]['owner'] = $owner;
         $this->registerInsertHook($contextId);
+        do_action(self::ACTION_BEGIN_OPERATION, $this->contexts[$contextId]['idempotencyOption'], $owner, $this->contexts[$contextId]['request']);
     }
 
     /**
@@ -670,7 +671,7 @@ class Receiver implements Hookable
                 : $this->recoveryPendingResponse();
         }
 
-        $this->fireCompletedNotification($savedPostId);
+        $this->fireCompletedNotification($savedPostId, $option);
 
         return $this->replayResponse($savedPostId, $context['isCreate'], $contextId);
     }
@@ -997,7 +998,7 @@ class Receiver implements Hookable
             );
 
             if ($completed) {
-                $this->fireCompletedNotification($postId);
+                $this->fireCompletedNotification($postId, $context['idempotencyOption']);
             }
             // A failed CAS can mean a database failure or a concurrent winner.
             // A retry may finish an expired create claim only if the complete
@@ -1104,9 +1105,9 @@ class Receiver implements Hookable
     /**
      * Fire the neutral completion action once per completed claim.
      */
-    private function fireCompletedNotification(?int $postId): void
+    private function fireCompletedNotification(?int $postId, string $option): void
     {
-        do_action(self::ACTION_AFTER_INSERT, $postId);
+        do_action(self::ACTION_AFTER_INSERT, $postId, $option);
     }
 
     /**

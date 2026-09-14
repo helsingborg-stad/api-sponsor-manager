@@ -15,7 +15,7 @@ namespace ApiSponsorManager\AcfRestUpload;
  * one row was affected. Concurrent contenders therefore serialize on the row:
  * the first transition wins, every loser observes zero affected rows and fails
  * closed, so a stale contender can never clobber a fresh owner and exactly one
- * caller can move an expired claim to complete/notified.
+ * caller can move an expired claim to complete/completion_attempted.
  *
  * The only non-CAS write is the initial fresh claim, which is an
  * insert-only INSERT through $wpdb: the unique option_name index decides
@@ -221,7 +221,7 @@ final class IdempotencyStore
      * Adopt the durable saved resource of an expired claim.
      *
      * Only one caller can transition the observed expired active claim to a
-     * completed, notified claim: the compare-and-swap replaces the exact
+     * completed, completion-attempted claim: the compare-and-swap replaces the exact
      * observed bytes with the completed state, so concurrent adopters
      * serialize on the row and exactly one of them wins. Every losing caller
      * returns false and must answer with a replay or the retryable
@@ -247,7 +247,7 @@ final class IdempotencyStore
             'phase' => 'complete',
             'owner' => $owner,
             'post_id' => $postId,
-            'notified' => true,
+            'completion_attempted' => true,
         ]);
 
         if (!$this->casReplace($option, $current, $complete)) {
@@ -273,7 +273,7 @@ final class IdempotencyStore
             'phase' => 'complete',
             'owner' => $owner,
             'post_id' => $postId,
-            'notified' => true,
+            'completion_attempted' => true,
         ]));
     }
 
@@ -329,6 +329,31 @@ final class IdempotencyStore
         $replacement['phase'] = $phase;
         $replacement['attachments'] = $attachments;
         return $replacement === $state || $this->casReplace($option, $state, $replacement);
+    }
+
+    /** Store a completion consumer's data under the active claim owner. */
+    public function tryRecordCompletionData(string $option, string $owner, string $consumer, array $data): bool
+    {
+        $state = $this->read($option);
+        if (!$this->isOwnedActiveState($state, $owner)) {
+            return false;
+        }
+        $replacement = $state;
+        $replacement['completion_data'][$consumer] = $data;
+        return $replacement === $state || $this->casReplace($option, $state, $replacement);
+    }
+
+    /** Claim one delivery batch before invoking external notification services. */
+    public function tryClaimDelivery(string $option, string $consumer, array $expected): bool
+    {
+        $state = $this->read($option);
+        if ($state !== $expected || !$this->isComplete($state) || ($state['delivery_attempted'][$consumer] ?? false)) {
+            return false;
+        }
+        $replacement = $state;
+        $replacement['delivery_attempted'][$consumer] = true;
+        unset($replacement['completion_data'][$consumer]);
+        return $this->casReplace($option, $state, $replacement);
     }
 
     /**

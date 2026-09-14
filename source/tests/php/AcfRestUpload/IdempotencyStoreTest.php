@@ -169,7 +169,7 @@ class IdempotencyStoreTest extends PluginTestCase
         self::assertTrue($this->store->tryComplete('opt', 'owner-a', 7));
         self::assertSame('complete', $this->option('opt')['status']);
         self::assertSame(7, $this->option('opt')['post_id']);
-        self::assertTrue($this->option('opt')['notified']);
+        self::assertTrue($this->option('opt')['completion_attempted']);
 
         // A completed claim can no longer be released by anybody.
         self::assertFalse($this->store->tryRelease('opt', 'owner-a'));
@@ -217,7 +217,7 @@ class IdempotencyStoreTest extends PluginTestCase
         self::assertIsString($owner);
         self::assertSame('complete', $this->option('opt')['status']);
         self::assertSame(12, $this->option('opt')['post_id']);
-        self::assertTrue($this->option('opt')['notified']);
+        self::assertTrue($this->option('opt')['completion_attempted']);
     }
 
     public function testAdoptRejectsLiveClaims(): void
@@ -237,7 +237,7 @@ class IdempotencyStoreTest extends PluginTestCase
 
         $winner = $this->store->tryAdopt('opt', 12, $expected);
         self::assertIsString($winner);
-        self::assertTrue($this->option('opt')['notified']);
+        self::assertTrue($this->option('opt')['completion_attempted']);
 
         // ... the loser still holds the stale observation and must fail
         // closed, so it replays/answers 425 without firing a second time.
@@ -246,7 +246,7 @@ class IdempotencyStoreTest extends PluginTestCase
         self::assertFalse($loser);
         self::assertSame($winner, $this->option('opt')['owner']);
         self::assertSame(12, $this->option('opt')['post_id']);
-        self::assertTrue($this->option('opt')['notified']);
+        self::assertTrue($this->option('opt')['completion_attempted']);
     }
 
     public function testAdoptFailsWhenTheObservedStateDiffers(): void
