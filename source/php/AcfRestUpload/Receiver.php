@@ -30,20 +30,28 @@ use WP_REST_Response;
  *  2. `rest_dispatch_request` runs only after the native endpoint permission
  *     callback passed. It atomically claims the idempotency key (or replays a
  *     completed claim, or answers 425 while another request holds the key),
- *     restores an interrupted claim by adopting its durably recorded resource,
- *     snapshots current ACF values for updates, sideloads the binaries and
- *     re-runs the native validators against the created attachment ids.
- *  3. A `rest_insert_{$postType}` listener records the created/target post id
- *     durably (claim state + post meta) so a crash can never cause a duplicate
- *     create.
- *  4. `rest_request_after_callbacks` finalizes: on success the attachments are
- *     parented, the claim is completed under the owner token and the neutral
- *     completion action fires exactly once. On failure the request-owned
- *     changes are recovered (created post deleted, update snapshots restored,
- *     created attachments deleted) and the claim is only released when the
- *     recovery fully succeeded. Running finalization in this filter also makes
- *     internal `rest_do_request()` dispatches finalize correctly, since
- *     `rest_post_dispatch` only runs on the outer HTTP serving path.
+ *     finishes an expired create claim only with explicit completion proof,
+ *     replays a create whose durable identity proves completion after its
+ *     claim row was pruned as history, snapshots current ACF values for
+ *     updates, sideloads the binaries and re-runs the native validators
+ *     against the created attachment ids.
+ *  3. A `rest_insert_{$postType}` listener attempts to store an unresolved
+ *     create identity, then records the saved post id in the claim. Neither
+ *     write proves native/ACF completion. Active claims survive history GC
+ *     even if both writes fail.
+ *  4. `rest_request_after_callbacks` finalizes: on success the durable
+ *     identity is completed first and only then the claim is completed under
+ *     the owner token, so claim completion can never outlive the identity;
+ *     only the claim transition winner attempts the completion action. A create
+ *     whose identity cannot be completed is answered with the controlled
+ *     recovery-pending response instead of a false success, keeping the
+ *     active claim so a retry cannot create a duplicate. On failure the
+ *     request-owned changes are recovered (created post deleted, update
+ *     snapshots restored, created attachments deleted) and the claim is only
+ *     released when the recovery fully succeeded. Running finalization in
+ *     this filter also makes internal `rest_do_request()` dispatches
+ *     finalize correctly, since `rest_post_dispatch` only runs on the outer
+ *     HTTP serving path.
  *  5. `rest_post_dispatch` is kept as a safety net for responses that bypass
  *     the callback filters.
  */
@@ -131,8 +139,11 @@ class Receiver implements Hookable
     public const ACTION_AFTER_INSERT = 'AcfRestUpload/afterInsertPost';
 
     /**
-     * Post meta that stores the idempotency keys a post was created/updated
-     * with, for its lifetime (creates) and as a bounded recent list (updates).
+     * Post meta that stores the bounded recent list of idempotency keys a
+     * post was created/updated with.
+     *
+     * This list is update history only and carries no completion proof. The
+     * permanent create identity lives in META_CREATE_IDENTITY.
      */
     public const META_KEYS = '_acf_rest_upload_keys';
 
@@ -140,6 +151,20 @@ class Receiver implements Hookable
      * Maximum number of idempotency keys kept per post.
      */
     private const POST_KEY_LIMIT = 10;
+
+    /**
+     * Post meta that stores the permanent create identity of a post.
+     *
+     * The value records the normalized claim scope (route, method, user and
+     * UUID) as its claim option name, plus the operation status. It is
+     * first attempted as unresolved when WordPress creates the post. It is only
+     * marked complete, as a checked write, before the claim completes, so
+     * claim completion can never persist without a complete identity.
+     * It exists for the post lifetime: a replay after the claim history
+     * pruned the option row is served only from a complete identity, and
+     * the meta is removed with its post.
+     */
+    public const META_CREATE_IDENTITY = '_acf_rest_upload_create_identity';
 
     /**
      * Request scoped state keyed by `spl_object_id()`.
@@ -391,7 +416,11 @@ class Receiver implements Hookable
         $contextId = spl_object_id($request);
 
         if (isset($this->contexts[$contextId])) {
-            $this->finalize($contextId, $response);
+            $replacement = $this->finalize($contextId, $response);
+
+            if ($replacement !== null) {
+                $response = $replacement;
+            }
         }
 
         return $response;
@@ -408,7 +437,12 @@ class Receiver implements Hookable
         $contextId = spl_object_id($request);
 
         if (isset($this->contexts[$contextId])) {
-            $this->finalize($contextId, $response);
+            $replacement = $this->finalize($contextId, $response);
+
+            if ($replacement !== null) {
+                $response = $replacement;
+            }
+
             unset($this->contexts[$contextId]);
         }
 
@@ -501,9 +535,10 @@ class Receiver implements Hookable
     /**
      * Atomically claim the idempotency key, or replay/answer a conflict.
      *
-     * Returns a response to short-circuit the native callback (replay or
-     * retryable in-progress), or null when this request now owns a fresh or
-     * reclaimed claim.
+     * Returns a response to short-circuit the native callback (replay,
+     * retryable in-progress, or the controlled recovery-pending response for
+     * a recorded resource whose durable identity could not be completed), or
+     * null when this request now owns a fresh claim.
      */
     private function acquireIdempotency(int $contextId): ?WP_REST_Response
     {
@@ -518,34 +553,27 @@ class Receiver implements Hookable
         }
 
         if ($store->isExpiredActive($state)) {
-            $adopted = $this->tryAdoptSavedResource($contextId, $store);
-
-            if ($adopted !== null) {
-                return $adopted;
-            }
-
-            $owner = $store->newOwner();
-
-            // The takeover only acts when the row still holds exactly the
-            // expired claim observed above; otherwise it fails closed and the
-            // key is answered as active below.
-            if ($store->tryReclaim($option, $store->activeState($owner, self::ACTIVE_LOCK_TTL), $state)) {
-                $this->bindClaim($contextId, $owner);
-
-                return null;
-            }
-
-            // Lost the takeover; re-read and fall through to the
-            // active/complete handling below.
-            $state = $store->read($option);
-
-            if ($store->isComplete($state)) {
-                return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
-            }
+            return $this->tryAdoptSavedResource($contextId, $store);
         }
 
         if ($store->isActive($state)) {
             return $this->inProgressResponse($store->activeExpiresAt($state));
+        }
+
+        // No usable claim row is left. A create consults the durable
+        // identity before a fresh claim: it replays only when the identity
+        // proves the original operation completed, so a completed create
+        // still replays after its claim row was pruned as history.
+        if ($context['isCreate']) {
+            $completedPostId = $this->findCreatePost($option);
+
+            if ($completedPostId !== null) {
+                $identity = get_post_meta($completedPostId, self::META_CREATE_IDENTITY, true);
+                if (($identity['status'] ?? null) !== 'complete') {
+                    return $this->recoveryPendingResponse();
+                }
+                return $this->replayResponse($completedPostId, true, $contextId);
+            }
         }
 
         $owner = $store->newOwner();
@@ -577,41 +605,39 @@ class Receiver implements Hookable
     }
 
     /**
-     * Restore an interrupted claim by adopting its durably recorded resource.
-     *
-     * Returns a replay-style response for the saved resource, or null when no
-     * saved resource exists and the claim should be reclaimed instead.
+     * Finish a claim only if the create identity already proves completion.
+     * An expired lock or a saved post ID alone never proves native success.
+     * Unresolved creates and updates require recovery, not automatic saving.
      */
-    private function tryAdoptSavedResource(int $contextId, IdempotencyStore $store): ?WP_REST_Response
+    private function tryAdoptSavedResource(int $contextId, IdempotencyStore $store): WP_REST_Response
     {
         $context = $this->contexts[$contextId];
         $option = $context['idempotencyOption'];
         $state = $store->read($option);
 
-        $savedPostId = is_array($state) && is_numeric($state['saved_post_id'] ?? null)
-            ? (int) $state['saved_post_id']
-            : null;
-
-        if ($savedPostId === null || get_post($savedPostId) === null) {
-            $savedPostId = $this->findPostByIdempotencyKey($context['key']);
+        if ($store->isComplete($state)) {
+            return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
+        }
+        if (!$context['isCreate']) {
+            return $this->recoveryPendingResponse();
         }
 
-        if ($savedPostId === null || get_post($savedPostId) === null) {
-            return null;
+        $savedPostId = $this->findCreatePost($option);
+        $identity = $savedPostId === null ? null : get_post_meta($savedPostId, self::META_CREATE_IDENTITY, true);
+        if (!is_array($identity) || ($identity['status'] ?? null) !== 'complete') {
+            return $this->recoveryPendingResponse();
         }
 
-        // The transition is arbitrated in the store: only the caller whose
-        // expected expired state still matches wins, so exactly one request
-        // fires the completion notification. Losers return null and the key
-        // is answered as replay or in-progress below.
+        // Only the CAS winner may attempt the completion notification.
         $owner = $store->tryAdopt($option, $savedPostId, $state);
 
         if ($owner === false) {
-            return null;
+            $state = $store->read($option);
+            return $store->isComplete($state)
+                ? $this->replayResponse($store->completedPostId($state), true, $contextId)
+                : $this->recoveryPendingResponse();
         }
 
-        // The interrupted request never completed, so this adoption performs
-        // the single completion notification for the resource.
         $this->fireCompletedNotification($savedPostId);
 
         return $this->replayResponse($savedPostId, $context['isCreate'], $contextId);
@@ -636,6 +662,10 @@ class Receiver implements Hookable
     /**
      * Durably record the saved resource identity as soon as WordPress created
      * or loaded the target post, before ACF saves the fields.
+     *
+     * Creates attempt an unresolved identity first. Record the resource even
+     * if that write fails. The active claim blocks GC and fresh creation,
+     * including when neither resource write succeeds.
      */
     private function onRestInsert(int $contextId, mixed $post): void
     {
@@ -648,17 +678,37 @@ class Receiver implements Hookable
         $postId = (int) $post->ID;
 
         $this->contexts[$contextId]['savedPostId'] = $postId;
+
+        if (!$context['isCreate']) {
+            $this->idempotencyStore()->tryRecordSavedPost(
+                $context['idempotencyOption'],
+                (string) $context['owner'],
+                $postId
+            );
+            $this->recordPostKey($postId, $context['key']);
+
+            return;
+        }
+
+        $identityPersisted = $this->recordCreateIdentity($postId, $context['idempotencyOption']);
+
         $this->idempotencyStore()->tryRecordSavedPost(
             $context['idempotencyOption'],
             (string) $context['owner'],
             $postId
         );
-        $this->recordPostKey($postId, $context['key']);
+
+        if ($identityPersisted) {
+            $this->recordPostKey($postId, $context['key']);
+        }
     }
 
     /**
-     * Store the idempotency key on the post for its lifetime, keeping only a
-     * bounded recent list for updates.
+     * Add the idempotency key to the bounded recent key list of the post.
+     *
+     * The list is update history of fixed size. It is never a completion
+     * proof: the permanent create identity is recorded separately (see
+     * recordCreateIdentity).
      */
     private function recordPostKey(int $postId, string $key): void
     {
@@ -674,6 +724,108 @@ class Receiver implements Hookable
         }
 
         update_post_meta($postId, self::META_KEYS, $keys);
+    }
+
+    /**
+     * Record the pending create identity of a new post.
+     *
+     * The identity starts unresolved: a recorded post alone never proves
+     * that the original operation completed. The write result is checked.
+     * An identity that is already stored for this claim scope counts as
+     * persisted (a re-fired insert hook never downgrades or rewrites it);
+     * a foreign identity fails closed.
+     */
+    private function recordCreateIdentity(int $postId, string $optionName): bool
+    {
+        $identity = get_post_meta($postId, self::META_CREATE_IDENTITY, true);
+
+        if (is_array($identity)) {
+            if (($identity['option'] ?? null) !== $optionName) {
+                return false;
+            }
+
+            return true;
+        }
+
+        return false !== update_post_meta($postId, self::META_CREATE_IDENTITY, [
+            'option' => $optionName,
+            'status' => 'unresolved',
+        ]);
+    }
+
+    /**
+     * Complete the create identity of a post, before the claim completes.
+     *
+     * The write result is checked. An identity of the same scope is upgraded
+     * to complete, an already complete identity stays untouched (the
+     * existing value counts as persisted), a missing identity is written
+     * complete directly, and a foreign identity fails closed. Only successful
+     * native finalization calls this method, never interrupted-claim recovery.
+     */
+    private function completeCreateIdentity(int $postId, string $optionName): bool
+    {
+        $identity = get_post_meta($postId, self::META_CREATE_IDENTITY, true);
+
+        if (is_array($identity)) {
+            if (($identity['option'] ?? null) !== $optionName) {
+                return false;
+            }
+
+            if (($identity['status'] ?? null) === 'complete') {
+                return true;
+            }
+        }
+
+        return false !== update_post_meta($postId, self::META_CREATE_IDENTITY, [
+            'option' => $optionName,
+            'status' => 'complete',
+        ]);
+    }
+
+    /**
+     * Find a post by the full create scope, including unresolved identities.
+     * The caller must check completion before replaying the operation.
+     */
+    private function findCreatePost(string $optionName): ?int
+    {
+        if (!function_exists('get_posts')) {
+            return null;
+        }
+
+        $posts = get_posts([
+            'post_type' => array_values(self::ROUTES),
+            // "any" excludes trash and some internal statuses. Identity
+            // lasts until deletion, not merely until the post is trashed.
+            'post_status' => array_values(get_post_stati()),
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_query' => [[
+                'key' => self::META_CREATE_IDENTITY,
+                'value' => '"' . $optionName . '"',
+                'compare' => 'LIKE',
+            ]],
+        ]);
+
+        $postId = is_array($posts) ? reset($posts) : false;
+
+        if (!is_numeric($postId) || (int) $postId <= 0) {
+            return null;
+        }
+
+        $postId = (int) $postId;
+
+        if (get_post($postId) === null) {
+            return null;
+        }
+
+        $identity = get_post_meta($postId, self::META_CREATE_IDENTITY, true);
+
+        if (!is_array($identity)
+            || ($identity['option'] ?? null) !== $optionName) {
+            return null;
+        }
+
+        return $postId;
     }
 
     /**
@@ -705,17 +857,22 @@ class Receiver implements Hookable
     /**
      * Finalize the request exactly once.
      *
-     * Success: parent the created attachments, complete the claim under the
-     * owner token and fire the neutral completion action once. Failure:
-     * recover request-owned changes and release the claim only when the
-     * recovery fully succeeded.
+     * Success: parent the created attachments, complete the durable identity
+     * and then the claim under the owner token, and fire the neutral
+     * completion action once. Failure: recover request-owned changes and
+     * release the claim only when the recovery fully succeeded.
+     *
+     * Returns a replacement response when the request must not keep its
+     * original response, or null to keep it. A create whose durable identity
+     * could not be completed keeps its active claim and is answered with the
+     * recovery-pending response instead of a false success.
      */
-    private function finalize(int $contextId, mixed $response): void
+    private function finalize(int $contextId, mixed $response): ?WP_REST_Response
     {
         $context = $this->contexts[$contextId];
 
         if ($context['finalized']) {
-            return;
+            return null;
         }
 
         $this->contexts[$contextId]['finalized'] = true;
@@ -724,7 +881,7 @@ class Receiver implements Hookable
         if ($this->isErrorResponse($response)) {
             $this->recoverFailure($contextId);
 
-            return;
+            return null;
         }
 
         $postId = $context['savedPostId'] ?? $this->resolveResponsePostId($response);
@@ -743,6 +900,24 @@ class Receiver implements Hookable
         $this->deleteTempFiles($contextId);
 
         if ($context['owner'] !== null) {
+            // Creates complete the durable identity BEFORE the claim: claim
+            // completion must never persist while the permanent identity is
+            // absent or unresolved, because a completed claim without a
+            // complete identity permits a duplicate create once the history
+            // GC pruned the claim row.
+            $identityComplete = !$context['isCreate']
+                || ($postId !== null && $postId > 0
+                    && $this->completeCreateIdentity($postId, $context['idempotencyOption']));
+
+            if (!$identityComplete) {
+                // Controlled recovery failure: the create finished natively,
+                // but its permanent identity is not persisted. No completion,
+                // no notification, and no false success: the original
+                // response is replaced and the active claim is kept. Retries
+                // stay unresolved; restoring persistence is not completion proof.
+                return $this->recoveryPendingResponse();
+            }
+
             $completed = $this->idempotencyStore()->tryComplete(
                 $context['idempotencyOption'],
                 (string) $context['owner'],
@@ -752,9 +927,12 @@ class Receiver implements Hookable
             if ($completed) {
                 $this->fireCompletedNotification($postId);
             }
-            // When the compare-and-swap fails the claim was reclaimed by a
-            // retry; that request adopts the saved resource and notifies.
+            // A failed CAS can mean a database failure or a concurrent winner.
+            // A retry may finish an expired create claim only if the complete
+            // identity persisted. It cannot infer completion for an update.
         }
+
+        return null;
     }
 
     /**
@@ -763,8 +941,8 @@ class Receiver implements Hookable
      * Created drafts are deleted, updated ACF values are restored from the
      * snapshot, and attachments created by this request are deleted. Old and
      * shared attachments are never touched. The claim is released only when
-     * every recovery step succeeded; otherwise the retry safety (expired-lock
-     * adoption of the recorded resource) is preserved.
+     * every recovery step succeeded; otherwise the active claim is retained
+     * and retries require explicit recovery.
      */
     private function recoverFailure(int $contextId): void
     {
@@ -1635,6 +1813,26 @@ class Receiver implements Hookable
         ], 425);
 
         $response->header('Retry-After', (string) $retryAfter);
+
+        return $response;
+    }
+
+    /**
+     * Build the retryable response for an operation without completion proof.
+     *
+     * Same retryable contract as the in-progress response (425 with
+     * Retry-After). The unresolved identity or active claim blocks fresh
+     * creation. Retrying does not automatically resume interrupted saving.
+     */
+    private function recoveryPendingResponse(): WP_REST_Response
+    {
+        $response = new WP_REST_Response([
+            'code' => 'acf_rest_upload_recovery_pending',
+            'message' => 'The recorded resource of this idempotency key is not confirmed yet. Retry with the same key.',
+            'data' => ['status' => 425],
+        ], 425);
+
+        $response->header('Retry-After', (string) self::ACTIVE_LOCK_TTL);
 
         return $response;
     }
