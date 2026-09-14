@@ -73,4 +73,64 @@ class NullInjectorTest extends TestCase
 
         self::assertSame(1, $values['a']['b']);
     }
+
+    public function testAppendsNullAtNextNumericPosition(): void
+    {
+        $result = (new NullInjector())->inject(['gallery' => [456]], ['acf[gallery][]']);
+
+        self::assertSame(['gallery' => [456, null]], $result);
+    }
+
+    public function testAppendsNullIntoEmptyNode(): void
+    {
+        $result = (new NullInjector())->inject([], ['acf[gallery][]']);
+
+        self::assertSame(['gallery' => [0 => null]], $result);
+    }
+
+    public function testInjectsExplicitRootedNullPaths(): void
+    {
+        $result = (new NullInjector())->inject(['image' => '$file:hero'], ['acf[image]']);
+
+        self::assertNull($result['image']);
+    }
+
+    public function testInjectsEmptyArrays(): void
+    {
+        $result = (new NullInjector())->injectEmptyArrays(
+            ['gallery' => [1, 2], 'other' => 'keep'],
+            ['acf[gallery]', 'acf[fresh][]']
+        );
+
+        self::assertSame([], $result['gallery']);
+        self::assertSame('keep', $result['other']);
+        self::assertSame([], $result['fresh']);
+    }
+
+    public function testAppendAddressedEmptyListDefinesTheListAsEmpty(): void
+    {
+        // acf[fresh][] with an empty list value must set fresh to [] exactly,
+        // never append one empty item (which would nest "[[]]").
+        $result = (new NullInjector())->injectEmptyArrays([], ['acf[fresh][]']);
+        self::assertSame(['fresh' => []], $result);
+
+        $cleared = (new NullInjector())->injectEmptyArrays(['fresh' => [1, 2]], ['acf[fresh][]']);
+        self::assertSame(['fresh' => []], $cleared);
+    }
+
+    public function testAppendAddressedNullStillAppendsAtNextPosition(): void
+    {
+        $result = (new NullInjector())->inject(['fresh' => [456]], ['acf[fresh][]']);
+
+        self::assertSame(['fresh' => [456, null]], $result);
+    }
+
+    public function testDoesNotMutateInputWhenInjectingEmptyArrays(): void
+    {
+        $values = ['gallery' => [1]];
+
+        (new NullInjector())->injectEmptyArrays($values, ['acf[gallery]']);
+
+        self::assertSame([1], $values['gallery']);
+    }
 }

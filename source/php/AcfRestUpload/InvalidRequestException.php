@@ -49,6 +49,14 @@ class InvalidRequestException extends RuntimeException
     }
 
     /**
+     * Build an exception for any other controlled protocol violation.
+     */
+    public static function invalidRequest(string $message): self
+    {
+        return new self('Invalid ACF REST upload request: ' . $message);
+    }
+
+    /**
      * Explicit accessor for the string protocol code.
      */
     public function getErrorCode(): string

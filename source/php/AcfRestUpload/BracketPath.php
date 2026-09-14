@@ -17,6 +17,10 @@ use InvalidArgumentException;
  *
  * Only canonical non-negative integers are converted to int segments, so
  * keys such as "01" stay strings and round-trip unchanged.
+ *
+ * Reserved path lists (nulls, empty lists) may use an empty bracket segment
+ * ("gallery[]") as an append marker. Parse with $allowAppend to receive a
+ * null segment for it; strict parsing keeps rejecting empty segments.
  */
 final class BracketPath
 {
@@ -27,11 +31,14 @@ final class BracketPath
     /**
      * Parse a bracket path into its segments.
      *
-     * @return list<int|string>
+     * When $allowAppend is true an empty bracket segment ("[]") is returned
+     * as a null segment, meaning "append at the next numeric position".
+     *
+     * @return list<int|string|null>
      *
      * @throws InvalidArgumentException When the path is malformed.
      */
-    public static function parse(string $path): array
+    public static function parse(string $path, bool $allowAppend = false): array
     {
         if ($path === '') {
             return [];
@@ -75,7 +82,18 @@ final class BracketPath
 
             $segment = substr($path, $offset + 1, $closing - $offset - 1);
 
-            if ($segment === '' || str_contains($segment, '[')) {
+            if ($segment === '') {
+                if (!$allowAppend) {
+                    throw new InvalidArgumentException(sprintf('Malformed bracket path "%s".', $path));
+                }
+
+                $segments[] = null;
+                $offset = $closing + 1;
+
+                continue;
+            }
+
+            if (str_contains($segment, '[')) {
                 throw new InvalidArgumentException(sprintf('Malformed bracket path "%s".', $path));
             }
 
@@ -90,9 +108,9 @@ final class BracketPath
      * Build a bracket path from its segments.
      *
      * The first string segment is used as the root. Every other segment is
-     * wrapped in brackets.
+     * wrapped in brackets. A null segment renders as an append marker "[]".
      *
-     * @param list<int|string> $segments
+     * @param list<int|string|null> $segments
      *
      * @throws InvalidArgumentException When a segment has an unsupported type.
      */
@@ -102,8 +120,8 @@ final class BracketPath
         $index = 0;
 
         foreach ($segments as $segment) {
-            if (!is_int($segment) && !is_string($segment)) {
-                throw new InvalidArgumentException('Path segments must be integers or strings.');
+            if ($segment !== null && !is_int($segment) && !is_string($segment)) {
+                throw new InvalidArgumentException('Path segments must be integers, strings or null.');
             }
 
             if ($index === 0 && is_string($segment)) {
@@ -113,7 +131,7 @@ final class BracketPath
                 continue;
             }
 
-            $path .= '[' . $segment . ']';
+            $path .= '[' . ($segment ?? '') . ']';
             $index++;
         }
 

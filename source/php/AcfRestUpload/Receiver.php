@@ -7,6 +7,7 @@ namespace ApiSponsorManager\AcfRestUpload;
 use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
 use InvalidArgumentException;
 use WP_Error;
+use WP_Post;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -16,12 +17,35 @@ use WP_REST_Response;
  * The client sends the regular ACF payload together with a protocol version
  * header, an idempotency key and the referenced binaries under the reserved
  * `_acf_rest_files[<key>]` part name. File references inside the payload use
- * the `$file:<key>` marker. Explicit nulls are listed in `_acf_rest_nulls[]`.
+ * the `$file:<key>` marker with numeric-index bracket paths
+ * (`acf[gallery][1]`). Explicit nulls are listed in `_acf_rest_nulls[]` and
+ * explicit empty lists in `_acf_rest_empty[]`; both use bracket paths rooted
+ * at `acf`.
  *
- * The receiver collects the references, validates that the referenced keys and
- * the uploaded parts match, clears the markers before ACF validates the
- * payload, sideloads each referenced binary into the media library and finally
- * parents the created attachments to the post that the REST callback created.
+ * Lifecycle:
+ *  1. `rest_pre_dispatch` validates the protocol request, hardens the
+ *     multipart input, resolves the referenced ACF fields against the real
+ *     destination post type and rewrites the payload markers to nulls/empties.
+ *     No side effects happen here.
+ *  2. `rest_dispatch_request` runs only after the native endpoint permission
+ *     callback passed. It atomically claims the idempotency key (or replays a
+ *     completed claim, or answers 425 while another request holds the key),
+ *     restores an interrupted claim by adopting its durably recorded resource,
+ *     snapshots current ACF values for updates, sideloads the binaries and
+ *     re-runs the native validators against the created attachment ids.
+ *  3. A `rest_insert_{$postType}` listener records the created/target post id
+ *     durably (claim state + post meta) so a crash can never cause a duplicate
+ *     create.
+ *  4. `rest_request_after_callbacks` finalizes: on success the attachments are
+ *     parented, the claim is completed under the owner token and the neutral
+ *     completion action fires exactly once. On failure the request-owned
+ *     changes are recovered (created post deleted, update snapshots restored,
+ *     created attachments deleted) and the claim is only released when the
+ *     recovery fully succeeded. Running finalization in this filter also makes
+ *     internal `rest_do_request()` dispatches finalize correctly, since
+ *     `rest_post_dispatch` only runs on the outer HTTP serving path.
+ *  5. `rest_post_dispatch` is kept as a safety net for responses that bypass
+ *     the callback filters.
  */
 class Receiver implements Hookable
 {
@@ -41,11 +65,8 @@ class Receiver implements Hookable
     private const IDEMPOTENCY_HEADER = 'Idempotency-Key';
 
     /**
-     * Seconds an active idempotency claim stays locked before it may be reclaimed.
-     *
-     * The lock is only held while a request is being processed. If the process
-     * is interrupted before it can release or complete the claim, the stale
-     * lock expires after this window so a retry can proceed.
+     * Seconds an active idempotency claim stays locked before it may be
+     * reclaimed or adopted.
      */
     private const ACTIVE_LOCK_TTL = 900;
 
@@ -60,26 +81,36 @@ class Receiver implements Hookable
     private const NULLS_FIELD = '_acf_rest_nulls';
 
     /**
+     * Reserved multipart part that lists explicit empty-list paths.
+     */
+    private const EMPTY_FIELD = '_acf_rest_empty';
+
+    /**
      * Request parameter that carries the ACF payload.
      */
     private const ACF_PARAM = 'acf';
 
     /**
-     * Routes that accept multipart uploads.
+     * Routes that accept multipart uploads, mapped to their post type.
      *
-     * @var list<string>
+     * @var array<string, string>
      */
-    private const ROUTE_PREFIXES = [
-        '/wp/v2/sponsor-assignments',
-        '/wp/v2/sponsor-offerings',
+    private const ROUTES = [
+        '/wp/v2/sponsor-assignments' => 'sponsor-assignment',
+        '/wp/v2/sponsor-offerings' => 'sponsor-offering',
     ];
 
     /**
      * Methods that accept multipart uploads.
      *
+     * Only POST is claimed: native PHP populates the multipart file arrays
+     * for POST requests only, so PUT/PATCH multipart bodies cannot be parsed
+     * by the receiver. Requests without the version header (JSON payloads)
+     * are never affected by this class.
+     *
      * @var list<string>
      */
-    private const METHODS = ['POST', 'PUT', 'PATCH'];
+    private const METHODS = ['POST'];
 
     /**
      * ACF field types that may carry a multipart file reference.
@@ -89,17 +120,48 @@ class Receiver implements Hookable
     private const UPLOAD_FIELD_TYPES = ['image', 'file', 'gallery'];
 
     /**
+     * Action fired after a protocol request fully succeeded natively, exactly
+     * once per idempotency key. Sponsor specific consumers hook this action;
+     * the receiver itself owns no sponsor policy.
+     */
+    public const ACTION_AFTER_INSERT = 'AcfRestUpload/afterInsertPost';
+
+    /**
+     * Post meta that stores the idempotency keys a post was created/updated
+     * with, for its lifetime (creates) and as a bounded recent list (updates).
+     */
+    public const META_KEYS = '_acf_rest_upload_keys';
+
+    /**
+     * Maximum number of idempotency keys kept per post.
+     */
+    private const POST_KEY_LIMIT = 10;
+
+    /**
      * Request scoped state keyed by `spl_object_id()`.
      *
      * @var array<int, array{
      *     references: list<FileReference>,
      *     files: array<string, array{name:string, type:string, tmp_name:string, error:int, size:int}>,
      *     attachments: list<int>,
-     *     needsSanitization?: bool,
-     *     idempotencyOption: string|null
+     *     needsSanitization: bool,
+     *     finalized: bool,
+     *     key: string,
+     *     idempotencyOption: string,
+     *     owner: string|null,
+     *     postType: string,
+     *     isCreate: bool,
+     *     targetPostId: int|null,
+     *     savedPostId: int|null,
+     *     touchedFields: list<string>,
+     *     galleryFields: list<string>,
+     *     acfSnapshot: array<string, mixed>,
+     *     insertHook: array{name: string, closure: callable}|null
      * }>
      */
     private array $contexts = [];
+
+    private IdempotencyStore|null $idempotencyStore = null;
 
     /**
      * Register the REST lifecycle hooks.
@@ -109,11 +171,15 @@ class Receiver implements Hookable
         add_filter('rest_pre_dispatch', [$this, 'preDispatch'], 1, 3);
         add_filter('rest_request_before_callbacks', [$this, 'beforeCallbacks'], 10, 3);
         add_filter('rest_dispatch_request', [$this, 'dispatchRequest'], 10, 4);
+        add_filter('rest_request_after_callbacks', [$this, 'afterCallbacks'], 10, 3);
         add_filter('rest_post_dispatch', [$this, 'postDispatch'], 10, 3);
     }
 
     /**
      * Validate and decode the multipart upload before the route is dispatched.
+     *
+     * This stage is strictly read/rewrite only: no attachments are created,
+     * nothing is claimed and no error leaks side effects.
      *
      * @param mixed $response
      * @param mixed $server
@@ -123,32 +189,22 @@ class Receiver implements Hookable
         $version = $request->get_header(self::VERSION_HEADER);
 
         if ($version === null || $version === '') {
-            // Not a multipart upload request.
+            // Not a multipart upload request; JSON payloads pass through.
             return $response;
         }
 
         if ((string) $version !== self::PROTOCOL_VERSION) {
-            return new WP_Error(
-                'acf_rest_upload_unsupported_version',
-                __('Unsupported ACF REST upload protocol version.', 'api-sponsor-manager'),
-                ['status' => 400]
-            );
+            return $this->error('acf_rest_upload_unsupported_version', 400, 'Unsupported ACF REST upload protocol version.');
         }
 
-        if (!$this->isSupportedRequest($request)) {
-            return new WP_Error(
-                'acf_rest_upload_unsupported_request',
-                __('ACF REST uploads are not supported for this route or method.', 'api-sponsor-manager'),
-                ['status' => 400]
-            );
+        $target = $this->resolveRouteTarget($request);
+
+        if ($target === null) {
+            return $this->error('acf_rest_upload_unsupported_request', 400, 'ACF REST uploads are not supported for this route or method.');
         }
 
         if (!current_user_can('upload_files')) {
-            return new WP_Error(
-                'acf_rest_upload_forbidden',
-                __('You are not allowed to upload files.', 'api-sponsor-manager'),
-                ['status' => 403]
-            );
+            return $this->error('acf_rest_upload_forbidden', 403, 'You are not allowed to upload files.');
         }
 
         $idempotencyError = $this->validateIdempotencyKey($request);
@@ -157,13 +213,43 @@ class Receiver implements Hookable
             return $idempotencyError;
         }
 
+        $key = (string) $this->resolveIdempotencyKey($request);
+
+        try {
+            $this->validateReservedParts($request);
+        } catch (InvalidRequestException $exception) {
+            return $this->error('acf_rest_upload_conflicting_parts', 400, $exception->getMessage());
+        }
+
         $acf = $request->get_param(self::ACF_PARAM);
-        $acf = is_array($acf) ? $acf : [];
+
+        if ($acf === null) {
+            $acf = [];
+        }
+
+        if (!is_array($acf)) {
+            return $this->error('acf_rest_upload_invalid_request', 400, 'The acf parameter must be an object.');
+        }
+
+        foreach ([self::FILES_FIELD, self::NULLS_FIELD, self::EMPTY_FIELD] as $reserved) {
+            if (array_key_exists($reserved, $acf)) {
+                return $this->error(
+                    'acf_rest_upload_conflicting_parts',
+                    400,
+                    sprintf('The acf payload must not contain the reserved protocol key "%s".', $reserved)
+                );
+            }
+        }
 
         $references = (new FileReferenceCollector())->collect($acf);
-        $files = $this->flattenUploadedFiles($request->get_file_params());
 
-        $referenceError = $this->validateReferences($references);
+        try {
+            $files = $this->flattenUploadedFiles($request->get_file_params());
+        } catch (InvalidRequestException $exception) {
+            return $this->error('acf_rest_upload_conflicting_parts', 400, $exception->getMessage());
+        }
+
+        $referenceError = $this->validateReferences($references, $target['postType']);
 
         if ($referenceError !== null) {
             return $referenceError;
@@ -172,37 +258,22 @@ class Receiver implements Hookable
         try {
             (new PartKeyValidator())->validate($references, array_keys($files));
         } catch (InvalidRequestException $exception) {
-            return new WP_Error(
-                InvalidRequestException::CODE,
-                $exception->getMessage(),
-                ['status' => 400]
-            );
+            return $this->error(InvalidRequestException::CODE, 400, $exception->getMessage());
         }
-
-        $referencePaths = array_map(
-            static fn(FileReference $reference): string => $reference->path,
-            $references
-        );
 
         try {
-            // Clear the markers and restore explicit nulls before ACF validates
-            // the payload.
-            $acf = (new NullInjector())->inject(
-                $acf,
-                [...$referencePaths, ...$this->extractNullPaths($request)]
-            );
-        } catch (InvalidArgumentException $exception) {
-            return new WP_Error(
-                InvalidRequestException::CODE,
-                $exception->getMessage(),
-                ['status' => 400]
-            );
+            $paths = $this->resolveReservedPaths($request, $references, $target['postType']);
+        } catch (InvalidRequestException $exception) {
+            return $this->error(InvalidRequestException::CODE, 400, $exception->getMessage());
         }
 
-        $idempotencyResponse = $this->registerIdempotency($request);
-
-        if ($idempotencyResponse !== null) {
-            return $idempotencyResponse;
+        try {
+            // Clear the markers, restore explicit nulls and empty lists before
+            // ACF validates the payload.
+            $acf = (new NullInjector())->inject($acf, [...$paths['references'], ...$paths['nulls']]);
+            $acf = (new NullInjector())->injectEmptyArrays($acf, $paths['empties']);
+        } catch (InvalidArgumentException $exception) {
+            return $this->error(InvalidRequestException::CODE, 400, $exception->getMessage());
         }
 
         $request->set_param(self::ACF_PARAM, $acf);
@@ -211,7 +282,19 @@ class Receiver implements Hookable
             'references' => $references,
             'files' => $files,
             'attachments' => [],
-            'idempotencyOption' => $this->idempotencyOptionName($request),
+            'needsSanitization' => false,
+            'finalized' => false,
+            'key' => $key,
+            'idempotencyOption' => (string) $this->idempotencyOptionName($request),
+            'owner' => null,
+            'postType' => $target['postType'],
+            'isCreate' => $target['isCreate'],
+            'targetPostId' => $target['targetPostId'],
+            'savedPostId' => null,
+            'touchedFields' => $paths['touchedFields'],
+            'galleryFields' => $paths['galleryFields'],
+            'acfSnapshot' => [],
+            'insertHook' => null,
         ];
 
         return $response;
@@ -250,16 +333,88 @@ class Receiver implements Hookable
     }
 
     /**
-     * Resolve uploads after core grants endpoint permission, before native saving.
+     * Claim the idempotency key and resolve the uploads.
+     *
+     * Runs after the native endpoint permission callback passed and before
+     * the native callback, so replays and conflicts are only served to
+     * callers the endpoint itself already authorized.
+     *
+     * @param mixed $response
+     * @param mixed $route
+     * @param mixed $handler
      */
     public function dispatchRequest($response, WP_REST_Request $request, $route, $handler): mixed
     {
         $contextId = spl_object_id($request);
-        if ($response !== null || !isset($this->contexts[$contextId])
-            || $this->contexts[$contextId]['references'] === []) {
+
+        if ($response !== null || !isset($this->contexts[$contextId])) {
             return $response;
         }
 
+        $claim = $this->acquireIdempotency($contextId);
+
+        if ($claim !== null) {
+            return $claim;
+        }
+
+        $this->snapshotAcfValues($contextId);
+
+        if ($this->contexts[$contextId]['references'] !== []) {
+            $resolution = $this->resolveUploads($contextId, $request);
+
+            if ($resolution !== null) {
+                return $resolution;
+            }
+        }
+
+        return $response;
+    }
+
+    /**
+     * Finalize the request right after the native callbacks, for both HTTP
+     * and internal `rest_do_request()` dispatches.
+     *
+     * @param mixed $response
+     * @param mixed $handler
+     */
+    public function afterCallbacks($response, $handler, WP_REST_Request $request): mixed
+    {
+        $contextId = spl_object_id($request);
+
+        if (isset($this->contexts[$contextId])) {
+            $this->finalize($contextId, $response);
+        }
+
+        return $response;
+    }
+
+    /**
+     * Safety net finalization for responses that bypass the callback filters.
+     *
+     * @param mixed $response
+     * @param mixed $server
+     */
+    public function postDispatch($response, $server, WP_REST_Request $request): mixed
+    {
+        $contextId = spl_object_id($request);
+
+        if (isset($this->contexts[$contextId])) {
+            $this->finalize($contextId, $response);
+            unset($this->contexts[$contextId]);
+        }
+
+        return $response;
+    }
+
+    /**
+     * Resolve the uploads after core grants endpoint permission, before native
+     * saving.
+     *
+     * Returns an error response after recovering the request, or null to
+     * continue into the native callback.
+     */
+    private function resolveUploads(int $contextId, WP_REST_Request $request): ?WP_Error
+    {
         $references = $this->contexts[$contextId]['references'];
         $files = $this->contexts[$contextId]['files'];
 
@@ -277,7 +432,7 @@ class Receiver implements Hookable
             $file = $files[$key] ?? null;
 
             if (!is_array($file)) {
-                continue;
+                return $this->error('acf_rest_upload_invalid_file', 400, 'An uploaded file part is invalid.');
             }
 
             $error = (int) ($file['error'] ?? UPLOAD_ERR_NO_FILE);
@@ -285,13 +440,7 @@ class Receiver implements Hookable
             $size = (int) ($file['size'] ?? 0);
 
             if ($error !== UPLOAD_ERR_OK || $tmpName === '' || $size <= 0) {
-                $this->rollback($contextId);
-
-                return new WP_Error(
-                    'acf_rest_upload_invalid_file',
-                    __('An uploaded file part is invalid.', 'api-sponsor-manager'),
-                    ['status' => 400]
-                );
+                return $this->error('acf_rest_upload_invalid_file', 400, 'An uploaded file part is invalid.');
             }
 
             $attachmentId = media_handle_sideload([
@@ -303,9 +452,7 @@ class Receiver implements Hookable
             ], 0);
 
             if (is_wp_error($attachmentId)) {
-                $this->rollback($contextId);
-
-                return $attachmentId;
+                return $this->classifyUploadError($attachmentId);
             }
 
             $this->contexts[$contextId]['attachments'][] = (int) $attachmentId;
@@ -315,88 +462,661 @@ class Receiver implements Hookable
             }
         }
 
+        // Existing attachment ids arrive as multipart strings; canonicalize
+        // them back to integers while preserving order and keys so mixed
+        // galleries keep their exact composition.
+        foreach ($this->contexts[$contextId]['galleryFields'] as $fieldName) {
+            if (array_key_exists($fieldName, $acf)) {
+                $acf[$fieldName] = $this->coerceGalleryIdList($acf[$fieldName]);
+            }
+        }
+
         $request->set_param(self::ACF_PARAM, $acf);
 
         // Run the original route validators, including ACF attachment constraints.
         $validation = $request->has_valid_params();
         if (is_wp_error($validation)) {
-            $this->rollback($contextId);
             return $validation;
         }
 
-        if (!empty($this->contexts[$contextId]['needsSanitization'])) {
+        if ($this->contexts[$contextId]['needsSanitization']) {
             $sanitization = $request->sanitize_params();
             if (is_wp_error($sanitization)) {
-                $this->rollback($contextId);
                 return $sanitization;
             }
         }
 
-        return $response;
+        return null;
     }
 
     /**
-     * Roll back on failure and parent the attachments on success.
+     * Atomically claim the idempotency key, or replay/answer a conflict.
      *
-     * @param mixed $response
-     * @param mixed $server
+     * Returns a response to short-circuit the native callback (replay or
+     * retryable in-progress), or null when this request now owns a fresh or
+     * reclaimed claim.
      */
-    public function postDispatch($response, $server, WP_REST_Request $request): mixed
+    private function acquireIdempotency(int $contextId): ?WP_REST_Response
     {
-        $contextId = spl_object_id($request);
+        $context = $this->contexts[$contextId];
+        $option = $context['idempotencyOption'];
+        $store = $this->idempotencyStore();
 
-        if (!isset($this->contexts[$contextId])) {
-            return $response;
+        $state = $store->read($option);
+
+        if ($store->isComplete($state)) {
+            return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
         }
 
-        $context = $this->contexts[$contextId];
-        unset($this->contexts[$contextId]);
+        if ($store->isExpiredActive($state)) {
+            $adopted = $this->tryAdoptSavedResource($contextId, $store);
 
-        if ($this->isErrorResponse($response)) {
-            foreach ($context['attachments'] as $attachmentId) {
-                wp_delete_attachment($attachmentId, true);
+            if ($adopted !== null) {
+                return $adopted;
             }
 
-            $this->clearIdempotency($context['idempotencyOption']);
+            $owner = $store->newOwner();
 
-            return $response;
+            // The takeover only acts when the row still holds exactly the
+            // expired claim observed above; otherwise it fails closed and the
+            // key is answered as active below.
+            if ($store->tryReclaim($option, $store->activeState($owner, self::ACTIVE_LOCK_TTL), $state)) {
+                $this->bindClaim($contextId, $owner);
+
+                return null;
+            }
+
+            // Lost the takeover; re-read and fall through to the
+            // active/complete handling below.
+            $state = $store->read($option);
+
+            if ($store->isComplete($state)) {
+                return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
+            }
         }
 
-        $postId = $this->resolveResponsePostId($response);
+        if ($store->isActive($state)) {
+            return $this->inProgressResponse($store->activeExpiresAt($state));
+        }
+
+        $owner = $store->newOwner();
+
+        if (!$store->tryClaim($option, $store->activeState($owner, self::ACTIVE_LOCK_TTL))) {
+            // A concurrent caller won the insert; re-read and answer.
+            $state = $store->read($option);
+
+            if ($store->isComplete($state)) {
+                return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
+            }
+
+            return $this->inProgressResponse($store->activeExpiresAt($state));
+        }
+
+        $store->trackClaim($option);
+        $this->bindClaim($contextId, $owner);
+
+        return null;
+    }
+
+    /**
+     * Bind a successful claim and its owner token to the current request.
+     */
+    private function bindClaim(int $contextId, string $owner): void
+    {
+        $this->contexts[$contextId]['owner'] = $owner;
+        $this->registerInsertHook($contextId);
+    }
+
+    /**
+     * Restore an interrupted claim by adopting its durably recorded resource.
+     *
+     * Returns a replay-style response for the saved resource, or null when no
+     * saved resource exists and the claim should be reclaimed instead.
+     */
+    private function tryAdoptSavedResource(int $contextId, IdempotencyStore $store): ?WP_REST_Response
+    {
+        $context = $this->contexts[$contextId];
+        $option = $context['idempotencyOption'];
+        $state = $store->read($option);
+
+        $savedPostId = is_array($state) && is_numeric($state['saved_post_id'] ?? null)
+            ? (int) $state['saved_post_id']
+            : null;
+
+        if ($savedPostId === null || get_post($savedPostId) === null) {
+            $savedPostId = $this->findPostByIdempotencyKey($context['key']);
+        }
+
+        if ($savedPostId === null || get_post($savedPostId) === null) {
+            return null;
+        }
+
+        // The transition is arbitrated in the store: only the caller whose
+        // expected expired state still matches wins, so exactly one request
+        // fires the completion notification. Losers return null and the key
+        // is answered as replay or in-progress below.
+        $owner = $store->tryAdopt($option, $savedPostId, $state);
+
+        if ($owner === false) {
+            return null;
+        }
+
+        // The interrupted request never completed, so this adoption performs
+        // the single completion notification for the resource.
+        $this->fireCompletedNotification($savedPostId);
+
+        return $this->replayResponse($savedPostId, $context['isCreate'], $contextId);
+    }
+
+    /**
+     * Register the native insert listener that durably records the resource.
+     */
+    private function registerInsertHook(int $contextId): void
+    {
+        $hook = 'rest_insert_' . $this->contexts[$contextId]['postType'];
+
+        $closure = function ($post, $restRequest, $creating) use ($contextId): void {
+            $this->onRestInsert($contextId, $post);
+        };
+
+        add_action($hook, $closure, 10, 3);
+
+        $this->contexts[$contextId]['insertHook'] = ['name' => $hook, 'closure' => $closure];
+    }
+
+    /**
+     * Durably record the saved resource identity as soon as WordPress created
+     * or loaded the target post, before ACF saves the fields.
+     */
+    private function onRestInsert(int $contextId, mixed $post): void
+    {
+        $context = $this->contexts[$contextId] ?? null;
+
+        if ($context === null || $context['finalized'] || !$post instanceof WP_Post) {
+            return;
+        }
+
+        $postId = (int) $post->ID;
+
+        $this->contexts[$contextId]['savedPostId'] = $postId;
+        $this->idempotencyStore()->tryRecordSavedPost(
+            $context['idempotencyOption'],
+            (string) $context['owner'],
+            $postId
+        );
+        $this->recordPostKey($postId, $context['key']);
+    }
+
+    /**
+     * Store the idempotency key on the post for its lifetime, keeping only a
+     * bounded recent list for updates.
+     */
+    private function recordPostKey(int $postId, string $key): void
+    {
+        $existing = get_post_meta($postId, self::META_KEYS, true);
+        $keys = is_array($existing) ? array_values(array_filter($existing, 'is_string')) : [];
+
+        if (!in_array($key, $keys, true)) {
+            $keys[] = $key;
+        }
+
+        if (count($keys) > self::POST_KEY_LIMIT) {
+            $keys = array_slice($keys, -self::POST_KEY_LIMIT);
+        }
+
+        update_post_meta($postId, self::META_KEYS, $keys);
+    }
+
+    /**
+     * Find a post that carries the idempotency key in its durable meta.
+     */
+    private function findPostByIdempotencyKey(string $key): ?int
+    {
+        if (!function_exists('get_posts')) {
+            return null;
+        }
+
+        $posts = get_posts([
+            'post_type' => array_values(self::ROUTES),
+            'post_status' => 'any',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_query' => [[
+                'key' => self::META_KEYS,
+                'value' => '"' . $key . '"',
+                'compare' => 'LIKE',
+            ]],
+        ]);
+
+        $postId = is_array($posts) ? reset($posts) : false;
+
+        return is_numeric($postId) && (int) $postId > 0 ? (int) $postId : null;
+    }
+
+    /**
+     * Finalize the request exactly once.
+     *
+     * Success: parent the created attachments, complete the claim under the
+     * owner token and fire the neutral completion action once. Failure:
+     * recover request-owned changes and release the claim only when the
+     * recovery fully succeeded.
+     */
+    private function finalize(int $contextId, mixed $response): void
+    {
+        $context = $this->contexts[$contextId];
+
+        if ($context['finalized']) {
+            return;
+        }
+
+        $this->contexts[$contextId]['finalized'] = true;
+        $this->unregisterInsertHook($contextId);
+
+        if ($this->isErrorResponse($response)) {
+            $this->recoverFailure($contextId);
+
+            return;
+        }
+
+        $postId = $context['savedPostId'] ?? $this->resolveResponsePostId($response);
 
         if ($postId !== null && $postId > 0) {
             foreach ($context['attachments'] as $attachmentId) {
+                // A parenting failure leaves the attachment in the media
+                // library but does not invalidate the saved post.
                 wp_update_post([
                     'ID' => $attachmentId,
                     'post_parent' => $postId,
-                ]);
+                ], true);
             }
         }
 
-        $this->completeIdempotency($context['idempotencyOption'], $postId);
+        $this->deleteTempFiles($contextId);
 
-        return $response;
+        if ($context['owner'] !== null) {
+            $completed = $this->idempotencyStore()->tryComplete(
+                $context['idempotencyOption'],
+                (string) $context['owner'],
+                $postId
+            );
+
+            if ($completed) {
+                $this->fireCompletedNotification($postId);
+            }
+            // When the compare-and-swap fails the claim was reclaimed by a
+            // retry; that request adopts the saved resource and notifies.
+        }
     }
 
     /**
-     * Validate that every file reference targets an enabled top-level ACF field.
+     * Recover request-owned changes after a failed request.
+     *
+     * Created drafts are deleted, updated ACF values are restored from the
+     * snapshot, and attachments created by this request are deleted. Old and
+     * shared attachments are never touched. The claim is released only when
+     * every recovery step succeeded; otherwise the retry safety (expired-lock
+     * adoption of the recorded resource) is preserved.
+     */
+    private function recoverFailure(int $contextId): void
+    {
+        $context = $this->contexts[$contextId];
+        $recoveryFailed = false;
+
+        if ($context['isCreate'] && $context['savedPostId'] !== null) {
+            $deleted = wp_delete_post($context['savedPostId'], true);
+
+            if ($deleted === false || $deleted === null) {
+                $recoveryFailed = true;
+            }
+        }
+
+        if (!$context['isCreate'] && $context['targetPostId'] !== null && $context['acfSnapshot'] !== []) {
+            if (!function_exists('update_field')) {
+                $recoveryFailed = true;
+            } else {
+                foreach ($context['acfSnapshot'] as $fieldName => $previous) {
+                    if ($previous === null || $previous === false) {
+                        if (function_exists('delete_field')) {
+                            delete_field($fieldName, $context['targetPostId']);
+                        } else {
+                            $recoveryFailed = true;
+                        }
+
+                        continue;
+                    }
+
+                    if (update_field($fieldName, $previous, $context['targetPostId']) === false) {
+                        $recoveryFailed = true;
+                    }
+                }
+            }
+        }
+
+        foreach ($context['attachments'] as $attachmentId) {
+            if (wp_delete_attachment($attachmentId, true) === false) {
+                $recoveryFailed = true;
+            }
+        }
+
+        $this->contexts[$contextId]['attachments'] = [];
+        $this->deleteTempFiles($contextId);
+
+        if (!$recoveryFailed && $context['owner'] !== null) {
+            $this->idempotencyStore()->tryRelease(
+                $context['idempotencyOption'],
+                (string) $context['owner']
+            );
+        }
+    }
+
+    /**
+     * Snapshot the current ACF values of every field the request touches, so
+     * a late native failure can restore them during updates.
+     */
+    private function snapshotAcfValues(int $contextId): void
+    {
+        $context = $this->contexts[$contextId];
+
+        if ($context['isCreate'] || $context['targetPostId'] === null
+            || $context['touchedFields'] === [] || !function_exists('get_field')) {
+            return;
+        }
+
+        $snapshot = [];
+
+        foreach ($context['touchedFields'] as $fieldName) {
+            $snapshot[$fieldName] = get_field($fieldName, $context['targetPostId']);
+        }
+
+        $this->contexts[$contextId]['acfSnapshot'] = $snapshot;
+    }
+
+    /**
+     * Remove the per-request native insert listener.
+     */
+    private function unregisterInsertHook(int $contextId): void
+    {
+        $hook = $this->contexts[$contextId]['insertHook'];
+
+        if ($hook !== null) {
+            remove_action($hook['name'], $hook['closure']);
+        }
+
+        $this->contexts[$contextId]['insertHook'] = null;
+    }
+
+    /**
+     * Mark a context as finalized without further recovery.
+     */
+    private function markFinalized(int $contextId): void
+    {
+        $this->contexts[$contextId]['finalized'] = true;
+        $this->unregisterInsertHook($contextId);
+    }
+
+    /**
+     * Fire the neutral completion action once per completed claim.
+     */
+    private function fireCompletedNotification(?int $postId): void
+    {
+        do_action(self::ACTION_AFTER_INSERT, $postId);
+    }
+
+    /**
+     * Remove leftover temporary files of parts that were never moved.
+     */
+    private function deleteTempFiles(int $contextId): void
+    {
+        foreach ($this->contexts[$contextId]['files'] as $file) {
+            $tmpName = $file['tmp_name'] ?? null;
+
+            if (is_string($tmpName) && $tmpName !== '' && file_exists($tmpName)) {
+                @unlink($tmpName);
+            }
+        }
+    }
+
+    /**
+     * Validate that the reserved protocol parts are structurally sound.
+     *
+     * The binaries must only travel as `_acf_rest_files[<key>]` file parts; a
+     * body field with that name is a conflicting duplicate. File params must
+     * only contain the reserved files namespace.
+     *
+     * @throws InvalidRequestException When parts conflict.
+     */
+    private function validateReservedParts(WP_REST_Request $request): void
+    {
+        $bodyParams = $request->get_body_params();
+
+        if (array_key_exists(self::FILES_FIELD, $bodyParams)) {
+            throw InvalidRequestException::invalidRequest(
+                sprintf('The reserved part "%s" must only be sent as a file part, not as a body field.', self::FILES_FIELD)
+            );
+        }
+
+        foreach (array_keys($request->get_file_params()) as $name) {
+            if ($name !== self::FILES_FIELD) {
+                throw InvalidRequestException::invalidRequest(
+                    sprintf('Unexpected file part "%s". Only "%s[<key>]" parts are accepted.', (string) $name, self::FILES_FIELD)
+                );
+            }
+        }
+    }
+
+    /**
+     * Resolve the explicit null and empty-list paths from their reserved
+     * parts, enforcing the rooted path contract.
+     *
+     * Both lists use bracket paths rooted at `acf`, relative to the request
+     * root (`acf[optional_image]`, `acf[gallery][1]`). A null or empty path
+     * that collides with a file reference path is rejected as ambiguous.
+     *
+     * @param list<FileReference> $references
+     *
+     * @return array{references: list<string>, nulls: list<string>, empties: list<string>, touchedFields: list<string>, galleryFields: list<string>}
+     *
+     * @throws InvalidRequestException When a path violates the contract.
+     */
+    private function resolveReservedPaths(WP_REST_Request $request, array $references, string $postType): array
+    {
+        $referencePaths = [];
+        $referenceSegments = [];
+        $touchedFields = [];
+
+        foreach ($references as $reference) {
+            $referencePaths[] = $reference->path;
+            $segments = BracketPath::parse($reference->path);
+            $referenceSegments[] = $segments;
+
+            $root = $segments[0] ?? null;
+
+            if (is_string($root) && $root !== '' && !in_array($root, $touchedFields, true)) {
+                $touchedFields[] = $root;
+            }
+        }
+
+        $nullSegments = $this->collectReservedListSegments($request, self::NULLS_FIELD);
+        $emptySegments = $this->collectReservedListSegments($request, self::EMPTY_FIELD);
+
+        foreach ([...$nullSegments, ...$emptySegments] as $segments) {
+            foreach ($referenceSegments as $candidate) {
+                if ($this->pathsConflict($segments, $candidate)) {
+                    throw InvalidRequestException::invalidRequest(
+                        sprintf(
+                            'The path "%s" collides with the file reference "%s".',
+                            BracketPath::format($segments),
+                            BracketPath::format($candidate)
+                        )
+                    );
+                }
+            }
+
+            // Nulls and empties also replace field values, so updates must
+            // snapshot those fields for recovery as well.
+            $root = $segments[0] ?? null;
+
+            if (is_string($root) && $root !== '' && !in_array($root, $touchedFields, true)) {
+                $touchedFields[] = $root;
+            }
+        }
+
+        foreach ($nullSegments as $segments) {
+            foreach ($emptySegments as $candidate) {
+                if ($this->pathsConflict($segments, $candidate)) {
+                    throw InvalidRequestException::invalidRequest(
+                        sprintf(
+                            'The path "%s" is listed as both null and empty.',
+                            BracketPath::format($segments)
+                        )
+                    );
+                }
+            }
+        }
+
+        $galleryFields = [];
+
+        foreach ($touchedFields as $fieldName) {
+            $field = $this->resolveDestinationField($postType, $fieldName);
+
+            if (is_array($field) && ($field['type'] ?? null) === 'gallery') {
+                $galleryFields[] = $fieldName;
+            }
+        }
+
+        return [
+            'references' => $referencePaths,
+            'nulls' => array_map([BracketPath::class, 'format'], $nullSegments),
+            'empties' => array_map([BracketPath::class, 'format'], $emptySegments),
+            'touchedFields' => $touchedFields,
+            'galleryFields' => $galleryFields,
+        ];
+    }
+
+    /**
+     * Read one reserved path list and parse it into rooted segments.
+     *
+     * @return list<list<int|string|null>>
+     *
+     * @throws InvalidRequestException When the list or a path is invalid.
+     */
+    private function collectReservedListSegments(WP_REST_Request $request, string $field): array
+    {
+        $list = $request->get_param($field);
+
+        if ($list === null) {
+            return [];
+        }
+
+        if (!is_array($list)) {
+            throw InvalidRequestException::invalidRequest(
+                sprintf('The reserved part "%s" must be a list of bracket paths.', $field)
+            );
+        }
+
+        $segments = [];
+
+        foreach ($list as $path) {
+            if (!is_string($path) || trim($path) === '') {
+                throw InvalidRequestException::invalidRequest(
+                    sprintf('The reserved part "%s" must only contain non-empty bracket path strings.', $field)
+                );
+            }
+
+            $parsed = $this->rootedAcfSegments(trim($path));
+
+            if ($parsed === null) {
+                throw InvalidRequestException::invalidRequest(
+                    sprintf('The path "%s" must be a bracket path rooted at "acf[...]".', trim($path))
+                );
+            }
+
+            $segments[] = $parsed;
+        }
+
+        return $segments;
+    }
+
+    /**
+     * Parse a request-rooted bracket path that must start with "acf".
+     *
+     * @return list<int|string|null>|null Null when the path violates the contract.
+     */
+    private function rootedAcfSegments(string $path): ?array
+    {
+        try {
+            $segments = BracketPath::parse($path, true);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+
+        if (($segments[0] ?? null) !== self::ACF_PARAM) {
+            return null;
+        }
+
+        array_shift($segments);
+
+        if ($segments === []) {
+            return null;
+        }
+
+        return $segments;
+    }
+
+    /**
+     * Whether two parsed paths address overlapping positions.
+     *
+     * An append segment ("[]") conservatively conflicts with any explicit
+     * segment at the same position, and a path that is a prefix of another
+     * always conflicts (the shorter would replace the container of the
+     * longer).
+     *
+     * @param list<int|string|null> $a
+     * @param list<int|string|null> $b
+     */
+    private function pathsConflict(array $a, array $b): bool
+    {
+        $length = min(count($a), count($b));
+
+        for ($index = 0; $index < $length; $index++) {
+            $left = $a[$index];
+            $right = $b[$index];
+
+            if ($left === $right) {
+                continue;
+            }
+
+            if ($left === null || $right === null) {
+                return true;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Validate that every file reference targets an enabled top-level ACF
+     * field of the real destination post type.
      *
      * A reference is only accepted when its path is exactly a top-level field
-     * name, or, for gallery fields, the field name followed by a single integer
-     * index. That field must be an image/file/gallery field with the
-     * `allow_multipart_rest_upload` setting enabled, and the field group that
-     * contains it must be exposed through the REST API. Empty, nested,
-     * unrecognized and disabled references are rejected.
+     * name, or, for gallery fields, the field name followed by a single
+     * numeric index. The field must be an image/file/gallery field with the
+     * `allow_multipart_rest_upload` setting enabled, and it must resolve to
+     * exactly one REST exposed field group located on the destination post
+     * type. Ambiguous field names are rejected.
      *
      * @param list<FileReference> $references
      */
-    private function validateReferences(array $references): ?WP_Error
+    private function validateReferences(array $references, string $postType): ?WP_Error
     {
         if ($references === []) {
             return null;
         }
 
-        if (!function_exists('acf_get_field') || !function_exists('acf_get_field_group')) {
+        if (!function_exists('acf_get_field') || !function_exists('acf_get_field_group')
+            || !function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')) {
             return $this->invalidReferenceError();
         }
 
@@ -407,7 +1127,7 @@ class Receiver implements Hookable
 
             try {
                 $segments = BracketPath::parse($reference->path);
-            } catch (InvalidArgumentException $exception) {
+            } catch (InvalidArgumentException) {
                 return $this->invalidReferenceError();
             }
 
@@ -418,9 +1138,9 @@ class Receiver implements Hookable
                 return $this->invalidReferenceError();
             }
 
-            $field = acf_get_field($fieldName);
+            $field = $this->resolveDestinationField($postType, $fieldName);
 
-            if (!is_array($field)) {
+            if ($field === null) {
                 return $this->invalidReferenceError();
             }
 
@@ -449,10 +1169,64 @@ class Receiver implements Hookable
     }
 
     /**
+     * Resolve a field name against the destination post type.
+     *
+     * The field must exist exactly once among the top-level fields of REST
+     * exposed field groups located on the post type; the global name lookup
+     * must return that same field. Anything else (missing, ambiguous, or
+     * located elsewhere) resolves to null.
+     */
+    private function resolveDestinationField(string $postType, string $fieldName): ?array
+    {
+        if (!function_exists('acf_get_field_groups') || !function_exists('acf_get_fields')
+            || !function_exists('acf_get_field')) {
+            return null;
+        }
+
+        $eligible = [];
+
+        foreach ((array) acf_get_field_groups(['post_type' => $postType]) as $group) {
+            if (!is_array($group) || empty($group['show_in_rest']) || !is_string($group['key'] ?? null)) {
+                continue;
+            }
+
+            foreach ((array) acf_get_fields($group['key']) as $field) {
+                if (!is_array($field)) {
+                    continue;
+                }
+
+                if (($field['name'] ?? null) !== $fieldName) {
+                    continue;
+                }
+
+                // Only top-level group fields are eligible; nested sub fields
+                // belong to their parent field.
+                if (($field['parent'] ?? null) !== $group['key']) {
+                    continue;
+                }
+
+                $eligible[] = $field;
+            }
+        }
+
+        if (count($eligible) !== 1) {
+            return null;
+        }
+
+        $canonical = acf_get_field($fieldName);
+
+        if (!is_array($canonical) || ($canonical['key'] ?? null) !== ($eligible[0]['key'] ?? null)) {
+            return null;
+        }
+
+        return $canonical;
+    }
+
+    /**
      * Whether a reference path uses the canonical shape for the field type.
      *
      * Image and file fields accept exactly the top-level field name. Gallery
-     * fields accept the field name followed by a single integer index, which
+     * fields accept the field name followed by a single numeric index, which
      * keeps the gallery order intact when the value is written at that path.
      * Any other nested path is unsupported.
      *
@@ -483,80 +1257,69 @@ class Receiver implements Hookable
      */
     private function invalidReferenceError(): WP_Error
     {
-        return new WP_Error(
+        return $this->error(
             'acf_rest_upload_invalid_reference',
-            __('The uploaded file is not attached to an upload enabled ACF field.', 'api-sponsor-manager'),
-            ['status' => 400]
+            400,
+            'The uploaded file is not attached to an upload enabled ACF field.'
         );
     }
 
     /**
-     * Whether the request targets a supported route and method.
+     * Whether the request targets a supported route and method, resolving the
+     * destination post type and target post.
+     *
+     * @return array{postType: string, targetPostId: int|null, isCreate: bool}|null
      */
-    private function isSupportedRequest(WP_REST_Request $request): bool
+    private function resolveRouteTarget(WP_REST_Request $request): ?array
     {
         $route = (string) $request->get_route();
 
-        $routeMatches = false;
-        foreach (self::ROUTE_PREFIXES as $prefix) {
+        if (!in_array(strtoupper((string) $request->get_method()), self::METHODS, true)) {
+            return null;
+        }
+
+        foreach (self::ROUTES as $prefix => $postType) {
             if ($route === $prefix) {
-                $routeMatches = true;
-                break;
+                return ['postType' => $postType, 'targetPostId' => null, 'isCreate' => true];
             }
 
             if (str_starts_with($route, $prefix . '/')) {
                 $suffix = substr($route, strlen($prefix) + 1);
 
                 if ($suffix !== '' && ctype_digit($suffix)) {
-                    $routeMatches = true;
-                    break;
+                    return ['postType' => $postType, 'targetPostId' => (int) $suffix, 'isCreate' => false];
                 }
             }
         }
 
-        if (!$routeMatches) {
-            return false;
-        }
-
-        return in_array(strtoupper((string) $request->get_method()), self::METHODS, true);
-    }
-
-    /**
-     * Read the explicitly requested null paths from the reserved part.
-     *
-     * @return list<string>
-     */
-    private function extractNullPaths(WP_REST_Request $request): array
-    {
-        $nulls = $request->get_param(self::NULLS_FIELD);
-
-        if (!is_array($nulls)) {
-            return [];
-        }
-
-        $paths = [];
-        foreach ($nulls as $path) {
-            if (is_string($path) && $path !== '') {
-                $paths[] = $path;
-            }
-        }
-
-        return $paths;
+        return null;
     }
 
     /**
      * Flatten the uploaded file parts into a map keyed by file reference key.
      *
+     * The wire contract only allows exactly one nesting level:
+     * `_acf_rest_files[<key>]`. Deeper structures would silently merge or
+     * shadow keys, so they are rejected instead.
+     *
      * @param array<array-key, mixed> $fileParams
      *
      * @return array<string, array{name:string, type:string, tmp_name:string, error:int, size:int}>
+     *
+     * @throws InvalidRequestException When the parts are structurally conflicting.
      */
     private function flattenUploadedFiles(array $fileParams): array
     {
         $files = $fileParams[self::FILES_FIELD] ?? null;
 
-        if (!is_array($files)) {
+        if ($files === null) {
             return [];
+        }
+
+        if (!is_array($files)) {
+            throw InvalidRequestException::invalidRequest(
+                sprintf('The reserved part "%s" must be a map of file parts.', self::FILES_FIELD)
+            );
         }
 
         // Native PHP $_FILES layout: parallel attribute arrays.
@@ -579,10 +1342,22 @@ class Receiver implements Hookable
      * @param array<array-key, mixed>                           $files
      * @param array<int, int|string>                            $path
      * @param array<string, array{name:string, type:string, tmp_name:string, error:int, size:int}> $records
+     *
+     * @throws InvalidRequestException When a part nests deeper than one key.
      */
     private function flattenNativeFiles(mixed $names, array $files, array $path, array &$records): void
     {
         if (is_array($names)) {
+            if ($path !== []) {
+                throw InvalidRequestException::invalidRequest(
+                    sprintf(
+                        'The file part "%s" nests deeper than "%s[<key>]".',
+                        self::FILES_FIELD . '[' . implode('][', array_map('strval', $path)) . ']',
+                        self::FILES_FIELD
+                    )
+                );
+            }
+
             foreach ($names as $key => $child) {
                 $this->flattenNativeFiles($child, $files, [...$path, $key], $records);
             }
@@ -594,6 +1369,8 @@ class Receiver implements Hookable
             return;
         }
 
+        // Numeric part names ("_acf_rest_files[0]") arrive as int array keys
+        // in the native layout; normalize them back to string keys.
         $key = (string) end($path);
 
         $records[$key] = [
@@ -627,6 +1404,8 @@ class Receiver implements Hookable
     /**
      * @param mixed $node
      * @param array<string, array{name:string, type:string, tmp_name:string, error:int, size:int}> $records
+     *
+     * @throws InvalidRequestException When a record key would contain brackets.
      */
     private function flattenFileRecords(mixed $node, string $path, array &$records): void
     {
@@ -648,6 +1427,13 @@ class Receiver implements Hookable
 
         foreach ($node as $key => $child) {
             $childPath = $path === '' ? (string) $key : $path . '[' . $key . ']';
+
+            if (str_contains($childPath, '[') || str_contains($childPath, ']')) {
+                throw InvalidRequestException::invalidRequest(
+                    sprintf('The file part key "%s" nests deeper than "%s[<key>]".', $childPath, self::FILES_FIELD)
+                );
+            }
+
             $this->flattenFileRecords($child, $childPath, $records);
         }
     }
@@ -656,7 +1442,7 @@ class Receiver implements Hookable
      * Write a value at a bracket path inside the ACF payload.
      *
      * @param array<mixed>           $values
-     * @param non-empty-list<int|string> $segments
+     * @param list<int|string> $segments
      *
      * @return array<mixed>
      */
@@ -683,15 +1469,30 @@ class Receiver implements Hookable
     }
 
     /**
-     * Delete the attachments that were created for the request.
+     * Canonicalize numeric-string attachment ids inside a gallery value while
+     * preserving keys and order.
+     *
+     * @return mixed
      */
-    private function rollback(int $contextId): void
+    private function coerceGalleryIdList(mixed $value): mixed
     {
-        foreach ($this->contexts[$contextId]['attachments'] as $attachmentId) {
-            wp_delete_attachment($attachmentId, true);
+        if (!is_array($value)) {
+            return $value;
         }
 
-        $this->contexts[$contextId]['attachments'] = [];
+        $result = [];
+
+        foreach ($value as $key => $entry) {
+            if (is_string($entry) && preg_match('/^\d+$/', $entry) === 1 && (string) (int) $entry === $entry) {
+                $result[$key] = (int) $entry;
+
+                continue;
+            }
+
+            $result[$key] = $entry;
+        }
+
+        return $result;
     }
 
     /**
@@ -727,6 +1528,68 @@ class Receiver implements Hookable
     }
 
     /**
+     * Build the retryable in-progress response for a held idempotency key.
+     *
+     * 425 (Too Early) is used because protocol senders treat it as retryable
+     * and honor Retry-After; a plain 409 would not be retried.
+     */
+    private function inProgressResponse(int $expiresAt): WP_REST_Response
+    {
+        $retryAfter = max(1, min($expiresAt - time(), self::ACTIVE_LOCK_TTL));
+
+        $response = new WP_REST_Response([
+            'code' => 'acf_rest_upload_in_progress',
+            'message' => 'A request with this idempotency key is already being processed.',
+            'data' => ['status' => 425],
+        ], 425);
+
+        $response->header('Retry-After', (string) $retryAfter);
+
+        return $response;
+    }
+
+    /**
+     * Build the replay response for a completed claim.
+     *
+     * The status mirrors what the native endpoint would have returned for the
+     * original operation (201 for a create, 200 for an update).
+     */
+    private function replayResponse(?int $postId, bool $isCreate, int $contextId): WP_REST_Response
+    {
+        $this->markFinalized($contextId);
+
+        return new WP_REST_Response(['id' => $postId], $isCreate ? 201 : 200);
+    }
+
+    /**
+     * Build a standard REST error payload with a controlled status code.
+     */
+    private function error(string $code, int $status, string $message): WP_Error
+    {
+        return new WP_Error($code, __($message, 'api-sponsor-manager'), ['status' => $status]);
+    }
+
+    /**
+     * Classify a media library upload failure into a controlled client/server
+     * error, keeping the original message.
+     */
+    private function classifyUploadError(WP_Error $uploadError): WP_Error
+    {
+        $message = $uploadError->get_error_message();
+        $lowered = strtolower($message);
+
+        if (str_contains($lowered, 'could not be moved')) {
+            return $this->error('acf_rest_upload_move_failed', 500, $message);
+        }
+
+        if (str_contains($lowered, 'file type') || str_contains($lowered, 'not permitted for security')) {
+            return $this->error('acf_rest_upload_invalid_file_type', 415, $message);
+        }
+
+        return $this->error('acf_rest_upload_invalid_file', 400, $message);
+    }
+
+    /**
      * Validate the client generated idempotency key.
      */
     private function validateIdempotencyKey(WP_REST_Request $request): ?WP_Error
@@ -734,18 +1597,18 @@ class Receiver implements Hookable
         $header = $request->get_header(self::IDEMPOTENCY_HEADER);
 
         if (!is_string($header) || trim($header) === '') {
-            return new WP_Error(
+            return $this->error(
                 'acf_rest_upload_missing_idempotency_key',
-                __('The Idempotency-Key header is required for ACF REST uploads.', 'api-sponsor-manager'),
-                ['status' => 400]
+                400,
+                'The Idempotency-Key header is required for ACF REST uploads.'
             );
         }
 
         if (!$this->isValidIdempotencyKey(trim($header))) {
-            return new WP_Error(
+            return $this->error(
                 'acf_rest_upload_invalid_idempotency_key',
-                __('The Idempotency-Key header must be a UUID.', 'api-sponsor-manager'),
-                ['status' => 400]
+                400,
+                'The Idempotency-Key header must be a UUID.'
             );
         }
 
@@ -810,104 +1673,6 @@ class Receiver implements Hookable
     }
 
     /**
-     * Atomically claim the idempotency key or replay an earlier result.
-     *
-     * add_option() reports false when the option already exists, which makes it
-     * the atomic claim: only the first concurrent caller wins the insert. An
-     * existing active claim becomes a conflict, an existing completed claim
-     * replays the created id. Active claims carry an expiry so a lock left
-     * behind by an interrupted request can be reclaimed after the TTL.
-     */
-    private function registerIdempotency(WP_REST_Request $request): WP_Error|WP_REST_Response|null
-    {
-        $option = $this->idempotencyOptionName($request);
-
-        if ($option === null) {
-            return null;
-        }
-
-        if (add_option($option, $this->activeIdempotencyState(), '', 'no')) {
-            return null;
-        }
-
-        $state = get_option($option);
-
-        if (is_array($state) && ($state['status'] ?? null) === 'complete') {
-            return new WP_REST_Response(
-                ['id' => $state['id'] ?? null],
-                200
-            );
-        }
-
-        if ($this->isExpiredActiveState($state)) {
-            delete_option($option);
-
-            if (add_option($option, $this->activeIdempotencyState(), '', 'no')) {
-                return null;
-            }
-        }
-
-        return new WP_Error(
-            'acf_rest_upload_in_progress',
-            __('A request with this idempotency key is already being processed.', 'api-sponsor-manager'),
-            ['status' => 409]
-        );
-    }
-
-    /**
-     * Build the state stored while a request holds an idempotency claim.
-     *
-     * @return array{status: string, expires_at: int}
-     */
-    private function activeIdempotencyState(): array
-    {
-        return [
-            'status' => 'active',
-            'expires_at' => time() + self::ACTIVE_LOCK_TTL,
-        ];
-    }
-
-    /**
-     * Whether a stored state is an active claim whose lock has expired.
-     *
-     * @param mixed $state
-     */
-    private function isExpiredActiveState(mixed $state): bool
-    {
-        if (!is_array($state) || ($state['status'] ?? null) !== 'active') {
-            return false;
-        }
-
-        $expiresAt = $state['expires_at'] ?? null;
-
-        return is_numeric($expiresAt) && (int) $expiresAt < time();
-    }
-
-    /**
-     * Mark a finished request so retries can be recognized.
-     */
-    private function completeIdempotency(?string $option, ?int $postId): void
-    {
-        if ($option === null) {
-            return;
-        }
-
-        update_option($option, ['status' => 'complete', 'id' => $postId], 'no');
-    }
-
-    /**
-     * Release the idempotency key after a failed request so it can be retried.
-     */
-    private function clearIdempotency(?string $option): void
-    {
-        if ($option === null) {
-            return;
-        }
-
-        delete_option($option);
-    }
-
-    /**
      * Load the admin media functions required by media_handle_sideload().
      */
     private function loadMediaFunctions(): void
@@ -919,5 +1684,13 @@ class Receiver implements Hookable
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
+    }
+
+    /**
+     * The idempotency state store.
+     */
+    protected function idempotencyStore(): IdempotencyStore
+    {
+        return $this->idempotencyStore ??= new IdempotencyStore();
     }
 }

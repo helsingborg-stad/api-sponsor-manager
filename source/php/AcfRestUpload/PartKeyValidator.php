@@ -17,7 +17,9 @@ final class PartKeyValidator
 {
     /**
      * @param iterable<FileReference|string> $references  Collected references or plain keys.
-     * @param iterable<string>               $uploadedKeys Multipart part names.
+     * @param iterable<string|int>           $uploadedKeys Multipart part names. Numeric part names
+     *                                                     ("_acf_rest_files[0]") arrive as int
+     *                                                     array keys and are normalized here.
      *
      * @throws InvalidRequestException When the two key sets differ.
      * @throws InvalidArgumentException When an entry has an unsupported type.
@@ -68,16 +70,20 @@ final class PartKeyValidator
      *
      * @return list<string>
      *
-     * @throws InvalidArgumentException When an entry is not a string.
+     * @throws InvalidArgumentException When an entry is not a string or int.
      */
     private function normalizeUploadedKeys(iterable $uploadedKeys): array
     {
         $keys = [];
 
         foreach ($uploadedKeys as $key) {
-            if (!is_string($key)) {
+            // Numeric part names ("_acf_rest_files[0]") surface as int array
+            // keys because PHP casts numeric string keys; accept both.
+            if (!is_string($key) && !is_int($key)) {
                 throw new InvalidArgumentException('Uploaded part keys must be strings.');
             }
+
+            $key = (string) $key;
 
             if (!in_array($key, $keys, true)) {
                 $keys[] = $key;

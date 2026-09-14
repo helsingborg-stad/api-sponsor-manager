@@ -93,5 +93,11 @@ class Notifications implements Hookable {
         $this->wpService->addAction('transition_post_status', [$this, 'onSubmitted'], 10, 3);
         $this->wpService->addAction('transition_post_status', [$this, 'onPublish'], 10, 3);
         $this->wpService->addAction('ModularityFrontendForm/afterInsertPost', [$this, 'sendEmailsAfterMetaHasBeenSaved'], 1, 0);
+
+        // Native REST multipart uploads (Receiver) never pass through the
+        // frontend-form database handler, so flush the queued submission mail
+        // when the complete native REST operation succeeded. The receiver
+        // fires this neutral action exactly once per idempotency key.
+        $this->wpService->addAction('AcfRestUpload/afterInsertPost', [$this, 'sendEmailsAfterMetaHasBeenSaved'], 1, 0);
     }
 }

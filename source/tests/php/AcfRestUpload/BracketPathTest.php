@@ -80,4 +80,23 @@ class BracketPathTest extends TestCase
             }
         }
     }
+
+    public function testParsesAppendSegmentsWhenAllowed(): void
+    {
+        self::assertSame(['acf', 'gallery', null], BracketPath::parse('acf[gallery][]', true));
+        self::assertSame([null, 'image'], BracketPath::parse('[][image]', true));
+    }
+
+    public function testStrictParseStillRejectsAppendSegments(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        BracketPath::parse('acf[gallery][]');
+    }
+
+    public function testFormatsAppendSegments(): void
+    {
+        self::assertSame('acf[gallery][]', BracketPath::format(['acf', 'gallery', null]));
+        self::assertSame('acf[gallery][]', BracketPath::format(BracketPath::parse('acf[gallery][]', true)));
+    }
 }
