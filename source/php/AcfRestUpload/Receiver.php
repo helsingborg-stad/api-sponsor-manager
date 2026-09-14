@@ -189,7 +189,7 @@ class Receiver implements Hookable
      *     progressFailed: bool,
      *     touchedFields: list<string>,
      *     galleryFields: list<string>,
-     *     acfSnapshot: array<string, mixed>,
+     *     updateSnapshot: UpdateSnapshot|null,
      *     insertHook: array{name: string, closure: callable, afterName: string, afterClosure: callable}|null
      * }>
      */
@@ -235,6 +235,18 @@ class Receiver implements Hookable
 
         if ($target === null) {
             return $this->error('acf_rest_upload_unsupported_request', 400, 'ACF REST uploads are not supported for this route or method.');
+        }
+
+        if (!$target['isCreate']) {
+            $allowed = ['title', 'status', self::ACF_PARAM, self::NULLS_FIELD, self::EMPTY_FIELD, 'context', '_fields', '_embed', '_wpnonce'];
+            foreach ($request->get_params() as $name => $value) {
+                if ($name === 'id' && is_numeric($value) && (string) $value === (string) $target['targetPostId']) {
+                    continue;
+                }
+                if (!in_array($name, $allowed, true)) {
+                    return $this->error('acf_rest_upload_unsupported_update', 400, 'Multipart updates support only title, status, and acf.');
+                }
+            }
         }
 
         if (!current_user_can('upload_files')) {
@@ -335,7 +347,7 @@ class Receiver implements Hookable
             'progressFailed' => false,
             'touchedFields' => $paths['touchedFields'],
             'galleryFields' => $paths['galleryFields'],
-            'acfSnapshot' => [],
+            'updateSnapshot' => null,
             'insertHook' => null,
         ];
 
@@ -399,7 +411,10 @@ class Receiver implements Hookable
             return $claim;
         }
 
-        $this->snapshotAcfValues($contextId);
+        $snapshotError = $this->snapshotUpdate($contextId, $request);
+        if ($snapshotError !== null) {
+            return $snapshotError;
+        }
 
         if ($this->contexts[$contextId]['references'] !== []) {
             $resolution = $this->resolveUploads($contextId, $request);
@@ -1014,26 +1029,8 @@ class Receiver implements Hookable
             }
         }
 
-        if (!$context['isCreate'] && $context['targetPostId'] !== null && $context['acfSnapshot'] !== []) {
-            if (!function_exists('update_field')) {
-                $recoveryFailed = true;
-            } else {
-                foreach ($context['acfSnapshot'] as $fieldName => $previous) {
-                    if ($previous === null || $previous === false) {
-                        if (function_exists('delete_field')) {
-                            delete_field($fieldName, $context['targetPostId']);
-                        } else {
-                            $recoveryFailed = true;
-                        }
-
-                        continue;
-                    }
-
-                    if (update_field($fieldName, $previous, $context['targetPostId']) === false) {
-                        $recoveryFailed = true;
-                    }
-                }
-            }
+        if ($context['updateSnapshot'] !== null && !$context['updateSnapshot']->restore()) {
+            $recoveryFailed = true;
         }
 
         foreach ($context['attachments'] as $attachmentId) {
@@ -1057,25 +1054,27 @@ class Receiver implements Hookable
     }
 
     /**
-     * Snapshot the current ACF values of every field the request touches, so
-     * a late native failure can restore them during updates.
+     * Capture all supported submitted values before native saving or uploads.
      */
-    private function snapshotAcfValues(int $contextId): void
+    private function snapshotUpdate(int $contextId, WP_REST_Request $request): ?WP_Error
     {
         $context = $this->contexts[$contextId];
 
-        if ($context['isCreate'] || $context['targetPostId'] === null
-            || $context['touchedFields'] === [] || !function_exists('get_field')) {
-            return;
+        if ($context['isCreate'] || $context['targetPostId'] === null) {
+            return null;
         }
-
-        $snapshot = [];
-
-        foreach ($context['touchedFields'] as $fieldName) {
-            $snapshot[$fieldName] = get_field($fieldName, $context['targetPostId']);
+        $post = get_post($context['targetPostId']);
+        if (!$post instanceof WP_Post || $post->post_type !== $context['postType']) {
+            return $this->error('acf_rest_upload_snapshot_failed', 400, 'The update target is unavailable.');
         }
-
-        $this->contexts[$contextId]['acfSnapshot'] = $snapshot;
+        $snapshot = UpdateSnapshot::capture($post, $request->get_params(),
+            fn (string $name): ?array => $this->resolveDestinationField($context['postType'], $context['targetPostId'], $name, $request->get_method())
+        );
+        if ($snapshot instanceof WP_Error) {
+            return $snapshot;
+        }
+        $this->contexts[$contextId]['updateSnapshot'] = $snapshot;
+        return null;
     }
 
     /**

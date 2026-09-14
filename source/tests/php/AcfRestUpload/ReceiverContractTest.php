@@ -42,6 +42,18 @@ class ReceiverContractTest extends PluginTestCase
         self::assertSame(['image' => '$file:hero'], $request->get_param('acf'));
     }
 
+    public function testMultipartUpdatesRejectUnsupportedMutableProperties(): void
+    {
+        foreach (['content', 'excerpt', 'slug', 'author', 'meta', 'featured_media', 'date', 'parent', 'id'] as $name) {
+            $request = $this->request([], route: '/wp/v2/sponsor-offerings/44');
+            $request->set_body_params(['acf' => [], $name => 99]);
+            $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_unsupported_update', 400);
+        }
+        $json = $this->request([], route: '/wp/v2/sponsor-offerings/44', version: null);
+        $json->set_body_params(['content' => 'Native JSON remains unchanged.']);
+        self::assertNull($this->receiver->preDispatch(null, null, $json));
+    }
+
     public function testUnsupportedVersionIsAControlledClientError(): void
     {
         $request = $this->request([], version: '2');

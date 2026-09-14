@@ -137,9 +137,10 @@ X-ACF-Rest-Upload-Version: 1
 - A completed key replays the original result without re-running the native
   callback: `201 Created` with `{"id": <post id>}` for creates, `200` with
   `{"id": <post id>}` for updates.
-- Claims hold an owner token and expire after 15 minutes. A retry after a
-  crash adopts the durably recorded resource (claim state plus post meta)
-  instead of creating a duplicate.
+- Claims hold an owner token and expire after 15 minutes. Expiry does not
+  permit a new save. Interrupted operations return a controlled 425 recovery
+  response unless the permanent create identity proves full completion.
+  Claims retain operation scope, owned attachment IDs, and progress phase.
 - Every ownership-sensitive claim transition (takeover, adoption, completion,
   release) is a database-level compare-and-swap on the exact stored claim
   state, so concurrent senders of the same key serialize on the row and all
@@ -151,6 +152,22 @@ X-ACF-Rest-Upload-Version: 1
 - On failure the receiver deletes the draft it created, restores overwritten
   ACF values of updates, and deletes only the attachments this request
   created — old and shared attachments are never removed.
+
+### Multipart updates and recovery
+
+- Multipart updates support only `title`, `status`, and `acf`. Other mutable
+  fields fail with `acf_rest_upload_unsupported_update` before saving or uploads.
+  Requests without the protocol header keep native JSON behavior.
+- Before saving, the receiver captures submitted native values and every
+  submitted ACF field by its exact destination field key. ACF snapshots use
+  raw values, not formatted image arrays or display values.
+- Recovery restores these values and checks storage afterward. An unchanged
+  value is not a recovery failure. Absent ACF values remain distinct from
+  stored false/null values, and field references are restored.
+- Failed restoration or media cleanup retains `recovery_failed` evidence and
+  blocks duplicate work. Snapshots are request-local: process interruption
+  requires explicit recovery, not automatic replay of partial work. Custom
+  field hooks that modify other objects require their own compensation.
 
 ### Notifications
 

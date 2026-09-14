@@ -881,6 +881,97 @@ class ReceiverIdentityTest extends PluginTestCase
         self::assertSame(3, $this->insertCount());
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('restorationOutcomes')]
+    public function testLateUpdateFailureRestoresAllSupportedValuesAndOnlyDeletesOwnedMedia(bool $restoreWorks): void
+    {
+        $this->wpdbFake = new ReceiverIdentityWpdb($this->rows);
+        $GLOBALS['wpdb'] = $this->wpdbFake;
+        $post = new class(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']) extends WP_Post {
+            public string $post_title = 'Original title';
+        };
+        $this->existingPosts = [77 => $post, 123 => new WP_Post(['ID' => 123, 'post_type' => 'attachment'])];
+        $this->meta[77] = ['description' => 'Original description', 'image' => 123, '_description' => 'field_description', '_image' => 'field_image'];
+        $before = $this->meta[77];
+        $fields = [
+            ['key' => 'field_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_fields', 'allow_multipart_rest_upload' => 1],
+            ['key' => 'field_description', 'name' => 'description', 'type' => 'text', 'parent' => 'group_fields'],
+        ];
+        $group = ['key' => 'group_fields', 'show_in_rest' => 1];
+        Functions\when('acf_get_field_groups')->justReturn([$group]);
+        Functions\when('acf_get_field_group')->justReturn($group);
+        Functions\when('acf_get_fields')->justReturn($fields);
+        Functions\when('acf_get_field_type')->justReturn((object) ['show_in_rest' => true]);
+        Functions\when('apply_filters')->alias(static fn (string $hook, mixed $value): mixed => $value);
+        Functions\when('metadata_exists')->alias(fn ($type, $id, $name): bool => array_key_exists($name, $this->meta[$id] ?? []));
+        Functions\when('get_field')->alias(function (string $key, int $id, bool $format) {
+            self::assertFalse($format);
+            return $this->meta[$id][substr($key, 6)] ?? null;
+        });
+        Functions\when('update_field')->alias(function (string $key, mixed $value, int $id) use ($restoreWorks): bool {
+            if ($restoreWorks) {
+                $this->meta[$id][substr($key, 6)] = $value;
+            }
+            return true;
+        });
+        Functions\when('delete_field')->justReturn(true);
+        Functions\when('wp_slash')->alias(static fn ($value) => $value);
+        Functions\when('wp_update_post')->alias(function (array $values) use ($post, $restoreWorks): int {
+            if ($restoreWorks) {
+                foreach ($values as $name => $value) {
+                    $post->{$name} = $value;
+                }
+            }
+            return 77;
+        });
+        Functions\when('media_handle_sideload')->alias(function (): int {
+            $this->existingPosts[901] = new WP_Post(['ID' => 901, 'post_type' => 'attachment']);
+            return 901;
+        });
+        Functions\expect('wp_delete_attachment')->once()->with(901, true)->andReturnUsing(function () {
+            $deleted = $this->existingPosts[901];
+            unset($this->existingPosts[901]);
+            return $deleted;
+        });
+        Functions\expect('wp_delete_post')->never();
+        $request = new class('POST', '/wp/v2/sponsor-offerings/77') extends WP_REST_Request {
+            public function has_valid_params(): bool { return true; }
+        };
+        $request->set_header('X-ACF-Rest-Upload-Version', '1');
+        $request->set_header('Idempotency-Key', self::UUID);
+        $request->set_body_params(['title' => 'Changed', 'status' => 'publish', 'acf' => ['description' => 'Changed', 'image' => '$file:hero']]);
+        $request->set_file_params(['_acf_rest_files' => ['hero' => [
+            'name' => 'photo.jpg', 'type' => 'image/jpeg', 'tmp_name' => sys_get_temp_dir() . '/missing-upload-' . bin2hex(random_bytes(16)),
+            'error' => UPLOAD_ERR_OK, 'size' => 5,
+        ]]]);
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+        self::assertNull($this->receiver->dispatchRequest(null, $request, $request->get_route(), []));
+        $post->post_title = 'Changed';
+        $post->post_status = 'publish';
+        do_action('rest_insert_offering', $post, $request, false);
+        $this->meta[77]['description'] = 'Changed';
+        $this->meta[77]['image'] = 901;
+        do_action('rest_after_insert_offering', $post, $request, false);
+        $failure = new \WP_Error('late_failure', 'A later callback failed.', ['status' => 500]);
+        self::assertSame($failure, $this->receiver->afterCallbacks($failure, [], $request));
+        self::assertArrayHasKey(123, $this->existingPosts);
+        self::assertArrayNotHasKey(901, $this->existingPosts);
+        $option = $this->idempotencyOption($request);
+        if ($restoreWorks) {
+            self::assertSame('Original title', $post->post_title);
+            self::assertSame('draft', $post->post_status);
+            self::assertSame($before, array_diff_key($this->meta[77], [Receiver::META_KEYS => true]));
+            self::assertArrayNotHasKey($option, $this->rows->rows);
+        } else {
+            self::assertSame('recovery_failed', $this->rows->rows[$option]['phase']);
+        }
+        $this->assertNoNotification();
+    }
+
+    public static function restorationOutcomes(): array
+    {
+        return [[true], [false]];
+    }
+
     public function testSavedPhaseAloneCannotReplayBeforeFinalization(): void
     {
         $this->wpdbFake = new ReceiverIdentityWpdb($this->rows);
@@ -1086,6 +1177,7 @@ class ReceiverIdentityTest extends PluginTestCase
     {
         $this->wpdbFake = new ReceiverIdentityWpdb($this->rows);
         $GLOBALS['wpdb'] = $this->wpdbFake;
+        $this->existingPosts[77] = new WP_Post(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']);
         foreach ([true, false] as $creating) {
             $request = $this->request($creating ? '/wp/v2/sponsor-offerings' : '/wp/v2/sponsor-offerings/77');
             self::assertNull($this->receiver->preDispatch(null, null, $request));
@@ -1129,7 +1221,7 @@ class ReceiverIdentityTest extends PluginTestCase
         }
 
         // No "$file:" markers, so the request needs no ACF or file fixtures.
-        $request->set_body_params(['acf' => ['image' => 123]]);
+        $request->set_body_params(['acf' => preg_match('~/\d+$~', $route) ? [] : ['image' => 123]]);
 
         return $request;
     }
