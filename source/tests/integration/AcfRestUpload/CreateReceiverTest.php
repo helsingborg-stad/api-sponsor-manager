@@ -19,16 +19,19 @@ use WP_REST_Response;
  */
 class CreateReceiverTest extends NativeTestCase
 {
+    private CreateReceiver $receiver;
     private array $files = [];
     private array $attachments = [];
     private array $fieldKeys = [];
+    private array $mail = [];
 
     public function set_up(): void
     {
         parent::set_up();
         $wp = new NativeWpService();
         (new SponsorUploads($wp))->addHooks();
-        (new CreateReceiver($wp, new NativeAcfService()))->addHooks();
+        $this->receiver = new CreateReceiver($wp, new NativeAcfService());
+        $this->receiver->addHooks();
         wp_set_current_user(self::factory()->user->create(['role' => 'administrator']));
         add_action('add_attachment', function (int $id): void { $this->attachments[] = $id; });
         add_action('doing_it_wrong_run', function (string $function, string $message): void {
@@ -36,6 +39,16 @@ class CreateReceiverTest extends NativeTestCase
                 self::assertStringContainsString('acf[contact_method]', $message);
                 $this->setExpectedIncorrectUsage($function);
             }
+        }, 10, 2);
+        update_field('field_69bbaf272549d', [
+            ['trigger' => 'submit', 'post_type' => 'offering', 'recipients' => 'recipient+{ID}@example.test',
+                'subject' => 'Submitted {ID}', 'message' => 'Saved {ID}'],
+            ['trigger' => 'submit', 'post_type' => 'assignment', 'recipients' => 'recipient+{ID}@example.test',
+                'subject' => 'Submitted {ID}', 'message' => 'Saved {ID}'],
+        ], 'options');
+        add_filter('pre_wp_mail', function ($return, array $attributes) {
+            $this->mail[] = $attributes;
+            return true;
         }, 10, 2);
         $GLOBALS['wp_rest_server'] = null;
     }
@@ -104,6 +117,100 @@ class CreateReceiverTest extends NativeTestCase
             self::assertFileIsReadable(get_attached_file($image));
             self::assertArrayHasKey('acf', $response->get_data());
         }
+    }
+
+    public function testCompletedCreateSendsOneConfiguredNotification(): void
+    {
+        $response = $this->dispatch($this->request());
+        self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
+        $id = $response->get_data()['id'];
+        self::assertSame([['recipient+' . $id . '@example.test']], array_column($this->mail, 'to'));
+    }
+
+    public function testInvalidFinalAttachmentParentRemovesOnlyTheFailedCreateAndDoesNotNotify(): void
+    {
+        $unrelated = self::factory()->post->create();
+        $before = $this->ids();
+        $request = $this->request();
+        add_filter('rest_request_after_callbacks', function ($response, $handler, $actual) use ($request): mixed {
+            if ($actual === $request) {
+                wp_update_post(['ID' => $this->attachments[array_key_last($this->attachments)], 'post_parent' => 0]);
+            }
+            return $response;
+        }, 20, 3);
+        $response = $this->dispatch($request);
+        self::assertSame(500, $response->get_status(), wp_json_encode($response->get_data()));
+        self::assertSame($before, $this->ids());
+        self::assertSame([], $this->mail);
+        self::assertSame('post', get_post_type($unrelated));
+    }
+
+    public function testFailedLateCleanupReturnsAControlledServerErrorAndKeepsTheUnremovedAttachment(): void
+    {
+        $request = $this->request();
+        $attachment = null;
+        $invalidate = function ($response, $handler, $actual) use ($request, &$attachment): mixed {
+            if ($actual === $request) {
+                $attachment = $this->attachments[array_key_last($this->attachments)];
+                wp_update_post(['ID' => $attachment, 'post_parent' => 0]);
+            }
+            return $response;
+        };
+        $denyDelete = static fn () => false;
+        add_filter('rest_request_after_callbacks', $invalidate, 20, 3);
+        add_filter('pre_delete_attachment', $denyDelete);
+        try {
+            $response = $this->dispatch($request);
+            self::assertSame(500, $response->get_status());
+            self::assertSame('acf_rest_upload_cleanup_failed', $response->get_data()['code']);
+            self::assertSame('attachment', get_post_type($attachment));
+            self::assertSame([], $this->mail);
+        } finally {
+            remove_filter('rest_request_after_callbacks', $invalidate, 20);
+            remove_filter('pre_delete_attachment', $denyDelete);
+        }
+    }
+
+    public function testSeparateCompletedSubmissionsNotifyIndependently(): void
+    {
+        foreach (['sponsor-offerings', 'sponsor-assignments'] as $route) {
+            self::assertSame(201, $this->dispatch($this->request($route))->get_status());
+        }
+        self::assertCount(2, $this->mail);
+        self::assertNotSame($this->mail[0]['to'], $this->mail[1]['to']);
+    }
+
+    public function testRepeatedFinalizationDoesNotEmitAnotherCompletionAction(): void
+    {
+        $completed = 0;
+        add_action('AcfRestUpload/created', static function () use (&$completed): void { $completed++; });
+        $request = $this->request();
+        $response = $this->dispatch($request);
+        $this->receiver->afterCallbacks($response, null, $request);
+        self::assertSame(1, $completed);
+    }
+
+    public function testFailedOuterCreateDoesNotRemoveNestedRequestResources(): void
+    {
+        $outer = $this->request();
+        $nested = null;
+        $outerAttachment = null;
+        add_action('rest_insert_offering', function () use (&$nested, &$outerAttachment): void {
+            $outerAttachment = $this->attachments[array_key_last($this->attachments)];
+            $nested = $this->dispatch($this->request('sponsor-assignments'));
+        }, 20);
+        add_filter('rest_request_after_callbacks', function ($response, $handler, $actual) use ($outer, &$outerAttachment): mixed {
+            if ($actual === $outer) { wp_update_post(['ID' => $outerAttachment, 'post_parent' => 0]); }
+            return $response;
+        }, 20, 3);
+        $response = $this->dispatch($outer);
+        self::assertSame(500, $response->get_status());
+        self::assertSame(201, $nested->get_status());
+        $id = $nested->get_data()['id'];
+        $image = (int) get_field('image', $id, false);
+        self::assertSame($id, (int) get_post($image)->post_parent);
+        self::assertFileIsReadable(get_attached_file($image));
+        self::assertCount(1, $this->mail);
     }
 
     public function testNativePhpMultipartShapeCreates(): void
@@ -402,6 +509,10 @@ class CreateReceiverTest extends NativeTestCase
         add_filter('AcfRestUpload/destinations', static fn ($routes) => $routes + [
             '/wp/v2/posts' => ['post_type' => 'post', 'image_field' => 'image'],
         ]);
+        $completed = [];
+        add_action('AcfRestUpload/created', static function (int $postId, ?int $attachment, WP_REST_Request $request) use (&$completed): void {
+            $completed[] = [$postId, $attachment, $request];
+        }, 20, 3);
         try {
             foreach ([[], ['image' => null]] as $acf) {
                 $request = new WP_REST_Request('POST', '/wp/v2/posts');
@@ -412,6 +523,8 @@ class CreateReceiverTest extends NativeTestCase
                 self::assertSame('post', get_post_type($response->get_data()['id']));
             }
             self::assertSame([], $this->attachments);
+            self::assertCount(2, $completed);
+            self::assertSame([null, null], array_column($completed, 1));
         } finally {
             acf_remove_local_field_group('group_create_optional');
         }

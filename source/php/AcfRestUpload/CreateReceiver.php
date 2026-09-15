@@ -6,6 +6,7 @@ namespace ApiSponsorManager\AcfRestUpload;
 
 use AcfService\AcfService;
 use WP_Error;
+use WP_Post;
 use WP_REST_Request;
 use WpService\WpService;
 
@@ -73,7 +74,13 @@ final class CreateReceiver
         }
         $files = $request->get_file_params();
         if ($references === []) {
-            return $files === [] ? null : self::error('invalid_parts', 400, 'Unexpected binary part.');
+            if ($files !== []) { return self::error('invalid_parts', 400, 'Unexpected binary part.'); }
+            $this->contexts[spl_object_id($request)] = [
+                'request' => $request, 'file' => null, 'name' => $name, 'type' => $destination['post_type'],
+                'image' => null, 'attachment' => null, 'post' => null, 'hook' => null, 'error' => null,
+                'deferImageValidation' => false,
+            ];
+            return null;
         }
         $reference = $references[0];
         if ($reference['path'] !== ['acf', $name] || !preg_match('/\A[A-Za-z0-9_-]+\z/D', $reference['key'])) {
@@ -115,7 +122,8 @@ final class CreateReceiver
         $request->set_param('acf', $acf);
         $this->contexts[spl_object_id($request)] = [
             'request' => $request, 'file' => $file, 'name' => $name, 'type' => $destination['post_type'],
-            'image' => $image, 'attachment' => null, 'hook' => null, 'error' => null,
+            'image' => $image, 'attachment' => null, 'post' => null, 'hook' => null, 'error' => null,
+            'deferImageValidation' => true,
         ];
         return null;
     }
@@ -145,7 +153,7 @@ final class CreateReceiver
     public function beforeCallbacks(mixed $response, mixed $handler, WP_REST_Request $request): mixed
     {
         $context = $this->contexts[spl_object_id($request)] ?? null;
-        if ($context === null || !$response instanceof WP_Error) { return $response; }
+        if ($context === null || !$context['deferImageValidation'] || !$response instanceof WP_Error) { return $response; }
         $data = $response->get_error_data('rest_invalid_param');
         $detail = $data['details']['acf'] ?? [];
         // Defer only this reference's null placeholder, not arbitrary native errors.
@@ -179,25 +187,33 @@ final class CreateReceiver
         if ($response !== null || !isset($this->contexts[$id])) { return $response; }
         $context = &$this->contexts[$id];
         // Core already ran the native endpoint permission callback.
-        if (!$this->wpService->currentUserCan('upload_files')) {
+        if ($context['image'] !== null && !$this->wpService->currentUserCan('upload_files')) {
             return self::error('forbidden', 403, 'You are not allowed to upload files.');
         }
-        $attachment = $context['image']->sideload($context['file']);
-        if ($attachment instanceof WP_Error) { return $attachment; }
-        $context['attachment'] = $attachment;
-        $acf = $request->get_param('acf');
-        $acf[$context['name']] = $attachment;
-        $request->set_param('acf', $acf);
-        $result = $request->has_valid_params();
-        if (!$result instanceof WP_Error) {
-            $result = $this->sanitizeSubset($request, array_intersect_key($request->get_attributes()['args'], ['acf' => true]));
+        if ($context['image'] !== null) {
+            $attachment = $context['image']->sideload($context['file']);
+            if ($attachment instanceof WP_Error) { return $attachment; }
+            $context['attachment'] = $attachment;
+            $acf = $request->get_param('acf');
+            $acf[$context['name']] = $attachment;
+            $request->set_param('acf', $acf);
+            $result = $request->has_valid_params();
+            if (!$result instanceof WP_Error) {
+                $result = $this->sanitizeSubset($request, array_intersect_key($request->get_attributes()['args'], ['acf' => true]));
+            }
+            if ($result instanceof WP_Error) {
+                if (!$this->wpService->wpDeleteAttachment($attachment, true)) {
+                    return self::error('cleanup_failed', 500, 'Could not delete the rejected image.');
+                }
+                $context['attachment'] = null;
+                return $result;
+            }
         }
-        if ($result instanceof WP_Error) {
-            return $this->wpService->wpDeleteAttachment($attachment, true) ? $result
-                : self::error('cleanup_failed', 500, 'Could not delete the rejected image.');
-        }
-        $context['hook'] = function ($post, $actual, $creating) use ($request, $id, $attachment): void {
+        $context['hook'] = function ($post, $actual, $creating) use ($request, $id): void {
             if ($actual !== $request || !$creating) { return; }
+            $this->contexts[$id]['post'] = $post;
+            $attachment = $this->contexts[$id]['attachment'];
+            if ($attachment === null) { return; }
             $result = $this->wpService->wpUpdatePost(['ID' => $attachment, 'post_parent' => $post->ID], true);
             if ($result instanceof WP_Error || !$result) {
                 $this->contexts[$id]['error'] = self::error('storage_failed', 500, 'Could not parent the uploaded image.');
@@ -211,14 +227,47 @@ final class CreateReceiver
     {
         $id = spl_object_id($request);
         $context = $this->contexts[$id] ?? null;
-        if ($context !== null) {
-            if ($context['hook'] !== null) {
-                $this->wpService->removeAction('rest_insert_' . $context['type'], $context['hook'], 10);
-            }
-            unset($this->contexts[$id]);
+        if ($context === null) { return $response; }
+        if ($context['hook'] !== null) {
+            $this->wpService->removeAction('rest_insert_' . $context['type'], $context['hook'], 10);
         }
-        // Late native failures and complete-success notifications belong to the finalization slice.
-        return $context['error'] ?? $response;
+        unset($this->contexts[$id]);
+        $failure = $context['error'] ?? ($response instanceof WP_Error ? $response : null);
+        if ($failure === null) { $failure = $this->checkComplete($context); }
+        if ($failure instanceof WP_Error) {
+            return $this->cleanup($context) ? $failure
+                : self::error('cleanup_failed', 500, 'Could not remove the failed create.');
+        }
+        $this->wpService->doAction('AcfRestUpload/created', $context['post']->ID, $context['attachment'], $request);
+        return $response;
+    }
+
+    private function checkComplete(array $context): ?WP_Error
+    {
+        $post = $context['post'];
+        $attachment = $context['attachment'];
+        if (!$post instanceof WP_Post) { return self::error('storage_failed', 500, 'Could not complete the create.'); }
+        if ($attachment === null) { return null; }
+        if (!is_int($attachment)) { return self::error('storage_failed', 500, 'Could not complete the uploaded image.'); }
+        $stored = $this->wpService->getPost($attachment);
+        $file = $this->wpService->getAttachedFile($attachment);
+        if (!$stored instanceof WP_Post || (int) $stored->post_parent !== $post->ID
+            || !is_string($file) || !is_readable($file)) {
+            return self::error('storage_failed', 500, 'Could not verify the uploaded image.');
+        }
+        return null;
+    }
+
+    private function cleanup(array $context): bool
+    {
+        $clean = true;
+        if (is_int($context['attachment']) && !$this->wpService->wpDeleteAttachment($context['attachment'], true)) {
+            $clean = false;
+        }
+        if ($context['post'] instanceof WP_Post && !$this->wpService->wpDeletePost($context['post']->ID, true)) {
+            $clean = false;
+        }
+        return $clean;
     }
 
     public static function error(string $code, int $status, string $message): WP_Error

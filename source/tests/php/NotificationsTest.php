@@ -75,6 +75,29 @@ class NotificationsTest extends PluginTestCase
         self::assertSame([['77@example.test'], ['88@example.test']], array_column($this->mail->sent, 'recipients'));
     }
 
+    public function testVersionTwoCreateSendsOnlyAfterItsCompletionAction(): void
+    {
+        $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
+        $request->set_header('X-ACF-Rest-Upload-Version', '2');
+        $this->notifications->beforeRestCallbacks(null, [], $request);
+        $this->notifications->onSubmitted('draft', 'new', $this->post(77));
+        self::assertSame([], $this->mail->sent);
+        $this->notifications->completedCreate(77, null, $request);
+        $this->notifications->completedCreate(77, null, $request);
+        self::assertSame([['77@example.test']], array_column($this->mail->sent, 'recipients'));
+    }
+
+    public function testFailedVersionTwoCreateDropsItsQueuedNotification(): void
+    {
+        $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
+        $request->set_header('X-ACF-Rest-Upload-Version', '2');
+        $this->notifications->beforeRestCallbacks(null, [], $request);
+        $this->notifications->onSubmitted('draft', 'new', $this->post(77));
+        $this->notifications->afterRestPostDispatch(null, [], $request);
+        $this->notifications->completedCreate(77, null, $request);
+        self::assertSame([], $this->mail->sent);
+    }
+
     private function begin(string $operation): WP_REST_Request
     {
         $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
