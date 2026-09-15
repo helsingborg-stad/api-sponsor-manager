@@ -169,6 +169,7 @@ class Receiver implements Hookable
      * the meta is removed with its post.
      */
     public const META_CREATE_IDENTITY = '_acf_rest_upload_create_identity';
+    public const META_CREATE_FINGERPRINT = '_acf_rest_upload_create_fingerprint';
 
     /**
      * Request scoped state keyed by `spl_object_id()`.
@@ -183,6 +184,8 @@ class Receiver implements Hookable
      *     idempotencyOption: string,
      *     owner: string|null,
      *     request: WP_REST_Request,
+     *     originalParams: array<string, mixed>,
+     *     fingerprint: string|null,
      *     postType: string,
      *     isCreate: bool,
      *     targetPostId: int|null,
@@ -329,10 +332,13 @@ class Receiver implements Hookable
             return $this->error(InvalidRequestException::CODE, 400, $exception->getMessage());
         }
 
+        $originalParams = $request->get_params();
         $request->set_param(self::ACF_PARAM, $acf);
 
         $this->contexts[spl_object_id($request)] = [
             'request' => $request,
+            'originalParams' => $originalParams,
+            'fingerprint' => null,
             'references' => $references,
             'files' => $files,
             'attachments' => [],
@@ -566,13 +572,18 @@ class Receiver implements Hookable
      * a recorded resource whose durable identity could not be completed), or
      * null when this request now owns a fresh claim.
      */
-    private function acquireIdempotency(int $contextId): ?WP_REST_Response
+    private function acquireIdempotency(int $contextId): WP_REST_Response|WP_Error|null
     {
         $context = $this->contexts[$contextId];
         $option = $context['idempotencyOption'];
         $store = $this->idempotencyStore();
 
         $state = $store->read($option);
+
+        if (is_array($state) && isset($state['fingerprint'])) {
+            $conflict = $this->checkFingerprint($contextId, $state['fingerprint']);
+            if ($conflict !== null) { return $conflict; }
+        }
 
         if ($store->isComplete($state)) {
             return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
@@ -598,6 +609,11 @@ class Receiver implements Hookable
             $completedPostId = $this->findCreatePost($option);
 
             if ($completedPostId !== null) {
+                $fingerprint = get_post_meta($completedPostId, self::META_CREATE_FINGERPRINT, true);
+                if ($fingerprint !== '') {
+                    $conflict = $this->checkFingerprint($contextId, $fingerprint);
+                    if ($conflict !== null) { return $conflict; }
+                }
                 $identity = get_post_meta($completedPostId, self::META_CREATE_IDENTITY, true);
                 if (($identity['status'] ?? null) !== 'complete') {
                     return $this->recoveryPendingResponse();
@@ -606,13 +622,21 @@ class Receiver implements Hookable
             }
         }
 
+        $fingerprintError = $this->checkFingerprint($contextId);
+        if ($fingerprintError !== null) { return $fingerprintError; }
         $owner = $store->newOwner();
 
         $request = $context['request'];
         $scope = ['route' => $request->get_route(), 'method' => $request->get_method(), 'user_id' => get_current_user_id(), 'key' => $context['key']];
-        if (!$store->tryClaim($option, $store->activeState($owner, self::ACTIVE_LOCK_TTL, $scope))) {
+        $fresh = $store->activeState($owner, self::ACTIVE_LOCK_TTL, $scope);
+        $fresh['fingerprint'] = $this->contexts[$contextId]['fingerprint'];
+        if (!$store->tryClaim($option, $fresh)) {
             // A concurrent caller won the insert; re-read and answer.
             $state = $store->read($option);
+            if (is_array($state) && isset($state['fingerprint'])) {
+                $conflict = $this->checkFingerprint($contextId, $state['fingerprint']);
+                if ($conflict !== null) { return $conflict; }
+            }
 
             if ($store->isComplete($state)) {
                 return $this->replayResponse($store->completedPostId($state), $context['isCreate'], $contextId);
@@ -624,6 +648,18 @@ class Receiver implements Hookable
         $store->trackClaim($option);
         $this->bindClaim($contextId, $owner);
 
+        return null;
+    }
+
+    private function checkFingerprint(int $contextId, mixed $expected = null): ?WP_Error
+    {
+        $context = $this->contexts[$contextId];
+        $fingerprint = $context['fingerprint'] ?? OperationFingerprint::calculate($context['originalParams'], $context['files']);
+        if ($fingerprint instanceof WP_Error) { return $fingerprint; }
+        $this->contexts[$contextId]['fingerprint'] = $fingerprint;
+        if ($expected !== null && (!is_string($expected) || !hash_equals($expected, $fingerprint))) {
+            return $this->error('acf_rest_upload_key_conflict', 409, 'This idempotency key belongs to different operation data.');
+        }
         return null;
     }
 
@@ -757,6 +793,17 @@ class Receiver implements Hookable
         }
 
         $identityPersisted = $this->recordCreateIdentity($postId, $context['idempotencyOption']);
+
+        if ($identityPersisted && $context['fingerprint'] !== null) {
+            $stored = get_post_meta($postId, self::META_CREATE_FINGERPRINT, true);
+            if ($stored === '') {
+                update_post_meta($postId, self::META_CREATE_FINGERPRINT, $context['fingerprint']);
+                $stored = get_post_meta($postId, self::META_CREATE_FINGERPRINT, true);
+            }
+            if ($stored !== $context['fingerprint']) {
+                $this->contexts[$contextId]['progressFailed'] = true;
+            }
+        }
 
         $this->idempotencyStore()->tryRecordSavedPost(
             $context['idempotencyOption'],
@@ -1100,6 +1147,7 @@ class Receiver implements Hookable
     {
         $this->contexts[$contextId]['finalized'] = true;
         $this->unregisterInsertHook($contextId);
+        $this->deleteTempFiles($contextId);
     }
 
     /**
@@ -1906,7 +1954,15 @@ class Receiver implements Hookable
      */
     private function replayResponse(?int $postId, bool $isCreate, int $contextId): WP_REST_Response
     {
+        $post = $postId === null ? null : get_post($postId);
         $this->markFinalized($contextId);
+        if (!$post instanceof WP_Post || $post->post_type !== $this->contexts[$contextId]['postType']) {
+            return new WP_REST_Response([
+                'code' => 'acf_rest_upload_resource_gone',
+                'message' => 'The original operation resource is no longer available.',
+                'data' => ['status' => 410],
+            ], 410);
+        }
 
         return new WP_REST_Response(['id' => $postId], $isCreate ? 201 : 200);
     }

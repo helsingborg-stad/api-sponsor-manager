@@ -137,6 +137,16 @@ X-ACF-Rest-Upload-Version: 1
 - A completed key replays the original result without re-running the native
   callback: `201 Created` with `{"id": <post id>}` for creates, `200` with
   `{"id": <post id>}` for updates.
+- New operations retain a fingerprint of request values, filenames, MIME
+  hints, and file bytes. Temporary paths and response controls are excluded.
+  Reusing a key with different data returns `409 acf_rest_upload_key_conflict`
+  before any new save or media creation. Create fingerprints remain with the
+  original post after claim-history cleanup. Legacy records without a
+  fingerprint keep their previous replay behavior because their original
+  input is unavailable. Update replay/conflict protection is bounded by the
+  retained claim history.
+- A completed claim whose post is deleted or no longer has the original post
+  type returns `410 acf_rest_upload_resource_gone`, not a false success.
 - Claims hold an owner token and expire after 15 minutes. Expiry does not
   permit a new save. Interrupted operations return a controlled 425 recovery
   response unless the permanent create identity proves full completion.

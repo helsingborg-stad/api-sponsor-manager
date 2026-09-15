@@ -55,6 +55,7 @@ class ReceiverIdentityTest extends PluginTestCase
     private ReceiverIdentityWpdb|null $wpdbFake = null;
 
     private array $insertListeners = [];
+    private array $temporaryFiles = [];
 
     public function setUp(): void
     {
@@ -184,6 +185,9 @@ class ReceiverIdentityTest extends PluginTestCase
 
     public function tearDown(): void
     {
+        foreach ($this->temporaryFiles as $file) {
+            if (is_file($file)) { unlink($file); }
+        }
         unset($GLOBALS['wpdb']);
 
         parent::tearDown();
@@ -637,7 +641,7 @@ class ReceiverIdentityTest extends PluginTestCase
         self::assertFalse($this->rows->rows[$option] ?? false);
 
         // The durable identity proves the original create completed.
-        $this->existingPosts[77] = new WP_Post(['ID' => 77]);
+        $this->existingPosts[77] = new WP_Post(['ID' => 77, 'post_type' => 'offering', 'post_status' => 'draft']);
         $this->meta[77][Receiver::META_CREATE_IDENTITY] = ['option' => $option, 'status' => 'complete'];
 
         $response = $this->receiver->dispatchRequest(null, $request, '/wp/v2/sponsor-offerings', []);
@@ -731,21 +735,7 @@ class ReceiverIdentityTest extends PluginTestCase
         $notifications = $this->doActionCalls;
         self::assertCount(102, $notifications);
         $retry = $this->request();
-        // Include a valid upload reference on replay so the no-sideload
-        // expectation guards a reachable media path, not an empty upload list.
-        $group = ['key' => 'group_image', 'show_in_rest' => 1];
-        $field = ['key' => 'field_image', 'name' => 'image', 'type' => 'image', 'parent' => 'group_image', 'allow_multipart_rest_upload' => 1];
-        Functions\when('acf_get_field_groups')->justReturn([$group]);
-        Functions\when('acf_get_field_group')->justReturn($group);
-        Functions\when('acf_get_fields')->justReturn([$field]);
-        Functions\when('acf_get_field_type')->justReturn((object) ['show_in_rest' => true]);
-        Functions\when('apply_filters')->alias(static fn (string $hook, mixed $value): mixed => $value);
-        $retry->set_body_params(['acf' => ['image' => '$file:hero']]);
-        $retry->set_file_params(['_acf_rest_files' => ['hero' => [
-            'name' => 'photo.jpg', 'type' => 'image/jpeg',
-            'tmp_name' => sys_get_temp_dir() . '/identity-replay-' . bin2hex(random_bytes(16)),
-            'error' => UPLOAD_ERR_OK, 'size' => 5,
-        ]]]);
+        // A replay repeats the original payload; changed data is a key conflict.
         self::assertNull($this->receiver->preDispatch(null, null, $retry));
         $response = $this->receiver->dispatchRequest(null, $retry, $retry->get_route(), []);
         self::assertInstanceOf(WP_REST_Response::class, $response, 'A non-null response bypasses native creation.');
@@ -943,7 +933,7 @@ class ReceiverIdentityTest extends PluginTestCase
         $request->set_header('Idempotency-Key', self::UUID);
         $request->set_body_params(['title' => 'Changed', 'status' => 'publish', 'acf' => ['description' => 'Changed', 'image' => '$file:hero']]);
         $request->set_file_params(['_acf_rest_files' => ['hero' => [
-            'name' => 'photo.jpg', 'type' => 'image/jpeg', 'tmp_name' => sys_get_temp_dir() . '/missing-upload-' . bin2hex(random_bytes(16)),
+            'name' => 'photo.jpg', 'type' => 'image/jpeg', 'tmp_name' => $this->temporaryUpload(),
             'error' => UPLOAD_ERR_OK, 'size' => 5,
         ]]]);
         self::assertNull($this->receiver->preDispatch(null, null, $request));
@@ -1008,7 +998,7 @@ class ReceiverIdentityTest extends PluginTestCase
         $request->set_header('Idempotency-Key', self::UUID);
         $request->set_body_params(['acf' => ['image' => '$file:hero']]);
         $request->set_file_params(['_acf_rest_files' => ['hero' => [
-            'name' => 'photo.jpg', 'type' => 'image/jpeg', 'tmp_name' => sys_get_temp_dir() . '/missing-upload-' . bin2hex(random_bytes(16)),
+            'name' => 'photo.jpg', 'type' => 'image/jpeg', 'tmp_name' => $this->temporaryUpload(),
             'error' => UPLOAD_ERR_OK, 'size' => 5,
         ]]]);
         $group = ['key' => 'group_image', 'show_in_rest' => 1];
@@ -1212,6 +1202,14 @@ class ReceiverIdentityTest extends PluginTestCase
             self::assertSame($response, $this->receiver->postDispatch($response, null, $request));
             self::assertSame([], $this->insertListeners['rest_insert_offering'][10]);
         }
+    }
+
+    private function temporaryUpload(): string
+    {
+        $path = tempnam(sys_get_temp_dir(), 'sponsor-unit-');
+        file_put_contents($path, 'image');
+        $this->temporaryFiles[] = $path;
+        return $path;
     }
 
     private function request(string $route = '/wp/v2/sponsor-offerings', ?string $key = self::UUID): WP_REST_Request

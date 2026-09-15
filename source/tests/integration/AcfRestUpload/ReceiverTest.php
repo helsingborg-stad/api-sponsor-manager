@@ -171,6 +171,64 @@ class ReceiverTest extends NativeTestCase
         self::assertCount(1, $this->completions);
     }
 
+    #[\PHPUnit\Framework\Attributes\DataProvider('incompatibleKeys')]
+    public function testChangedPayloadCannotReuseACompletedCreateKey(string $change, bool $pruned): void
+    {
+        $key = wp_generate_uuid4();
+        $original = $this->request(key: $key);
+        $first = $this->dispatch($original);
+        self::assertSame(201, $first->get_status());
+        if ($pruned) { delete_option($this->option($original)); }
+        $posts = $this->ids('offering');
+        $attachments = $this->ids('attachment');
+        $retry = $this->request(key: $key);
+        if ($change === 'title') {
+            $retry->set_param('title', 'Different operation');
+        } else {
+            $files = $retry->get_file_params();
+            file_put_contents($files['_acf_rest_files']['hero']['tmp_name'], 'changed', FILE_APPEND);
+            $files['_acf_rest_files']['hero']['size'] += 7;
+            $retry->set_file_params($files);
+        }
+        $response = $this->dispatch($retry);
+        self::assertSame(409, $response->get_status());
+        self::assertSame('acf_rest_upload_key_conflict', $response->get_data()['code']);
+        self::assertSame($posts, $this->ids('offering'));
+        self::assertSame($attachments, $this->ids('attachment'));
+        self::assertCount(1, $this->mail);
+    }
+
+    public static function incompatibleKeys(): array
+    {
+        return [['title', false], ['bytes', false], ['title', true], ['bytes', true]];
+    }
+
+    public function testChangedUpdateCannotReuseItsCompletedKey(): void
+    {
+        $first = $this->dispatch($this->request());
+        self::assertSame(201, $first->get_status());
+        $id = (int) $first->get_data()['id'];
+        $key = wp_generate_uuid4();
+        self::assertSame(200, $this->dispatch($this->request('sponsor-offerings/' . $id, $key))->get_status());
+        $retry = $this->request('sponsor-offerings/' . $id, $key);
+        $retry->set_param('title', 'Conflicting update');
+        self::assertSame(409, $this->dispatch($retry)->get_status());
+        self::assertSame('Original title', get_post($id)->post_title);
+    }
+
+    public function testDeletedResourceDoesNotReplayAsSuccess(): void
+    {
+        $key = wp_generate_uuid4();
+        $first = $this->dispatch($this->request(key: $key));
+        self::assertSame(201, $first->get_status());
+        wp_delete_post((int) $first->get_data()['id'], true);
+        $response = $this->dispatch($this->request(key: $key));
+        self::assertSame(410, $response->get_status());
+        self::assertSame('acf_rest_upload_resource_gone', $response->get_data()['code']);
+        self::assertSame([], $this->ids('offering'));
+        self::assertCount(1, $this->mail);
+    }
+
     public function testNativePermissionDenialCannotCreateMediaOrClaim(): void
     {
         $user = self::factory()->user->create_and_get(['role' => 'subscriber']);
