@@ -250,6 +250,12 @@ keys, nested nulls, empty arrays, mixed gallery order, and binary preservation.
 This is parser-to-native-dispatch verification, not authentication or routing
 through a deployed web server. A sandbox must permit HTTP to `127.0.0.1`.
 
+If the sandbox permits that address through its configured proxy but blocks
+direct loopback connections, clear proxy exclusions for the test command:
+`env NO_PROXY= no_proxy= composer test:integration`. Keep the sandbox proxy
+configured and its domain allowlist active. This does not authorize access
+to a denied destination.
+
 For a database-only run when loopback HTTP is unavailable:
 
 ```sh

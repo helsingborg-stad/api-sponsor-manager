@@ -22,14 +22,20 @@ final class PhpMultipartParser
             curl_setopt_array($curl, [CURLOPT_RETURNTRANSFER => true, CURLOPT_CONNECTTIMEOUT => 1, CURLOPT_TIMEOUT => 5]);
             $ready = false;
             for ($attempt = 0; $attempt < 40; $attempt++) {
-                if (curl_exec($curl) !== false) { $ready = true; break; }
+                if (curl_exec($curl) !== false && curl_getinfo($curl, CURLINFO_HTTP_CODE) === 200) { $ready = true; break; }
                 usleep(50000);
             }
-            if (!$ready) { throw new \RuntimeException('Parser connection failed: ' . curl_error($curl) . '\n' . file_get_contents($log)); }
+            if (!$ready) {
+                throw new \RuntimeException('Parser connection failed (HTTP ' . curl_getinfo($curl, CURLINFO_HTTP_CODE) . '): '
+                    . curl_error($curl) . "\n" . file_get_contents($log));
+            }
             curl_setopt_array($curl, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $encoded['body'], CURLOPT_HTTPHEADER => ['Content-Type: ' . $encoded['contentType']]]);
             $response = curl_exec($curl);
             if ($response === false || curl_getinfo($curl, CURLINFO_HTTP_CODE) !== 200) {
-                throw new \RuntimeException('Multipart HTTP submission failed: ' . curl_error($curl));
+                throw new \RuntimeException(
+                    'Multipart HTTP submission failed (HTTP ' . curl_getinfo($curl, CURLINFO_HTTP_CODE) . '): '
+                    . curl_error($curl) . "\n" . substr((string) $response, 0, 512) . "\n" . file_get_contents($log)
+                );
             }
             return json_decode($response, true, flags: JSON_THROW_ON_ERROR);
         } finally {
