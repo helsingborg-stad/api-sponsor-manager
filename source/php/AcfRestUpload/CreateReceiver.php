@@ -29,11 +29,14 @@ final class CreateReceiver
 
     public function prepare(mixed $response, mixed $server, WP_REST_Request $request): mixed
     {
-        if ($response !== null || $request->get_header('X-ACF-Rest-Upload-Version') !== '2') {
-            return $response;
-        }
+        if ($response !== null) { return $response; }
+        $version = $request->get_header('X-ACF-Rest-Upload-Version');
+        if ($version === '' || $version === null) { return $response; }
         foreach ($this->wpService->applyFilters('AcfRestUpload/destinations', []) as $route => $destination) {
             if ($request->get_route() === $route || str_starts_with($request->get_route(), $route . '/')) {
+                if ($version !== '2') {
+                    return self::error('unsupported_version', 400, 'Only protocol version 2 is supported.');
+                }
                 if ($request->get_method() !== 'POST' || $request->get_route() !== $route) {
                     return self::error('unsupported_request', 400, 'Only collection POST creates accept image uploads.');
                 }

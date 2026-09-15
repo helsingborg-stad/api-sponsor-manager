@@ -49,21 +49,17 @@ final class UploadProvider
 
     private function bootEmbedded(): void
     {
-        // Keep the historical version-1 machinery until the separate removal task.
         if (!$this->hasEmbeddedFiles()) {
             $this->unavailable('Embedded provider files are unavailable.');
             return;
         }
         (new AcfRestUpload\FieldSettings())->addHooks();
-        (new AcfRestUpload\Receiver())->addHooks();
         (new AcfRestUpload\CreateReceiver($this->wpService, $this->acfService))->addHooks();
     }
 
     private function hasEmbeddedFiles(): bool
     {
-        $files = ['CreateReceiver', 'CreateImage', 'FieldSettings', 'Receiver', 'IdempotencyStore',
-            'BracketPath', 'InvalidRequestException', 'ProtocolV1', 'NullInjector', 'FileReferenceCollector',
-            'OperationFingerprint', 'FileReference', 'PartKeyValidator', 'UpdateSnapshot'];
+        $files = ['CreateReceiver', 'CreateImage', 'FieldSettings'];
         return !in_array(false, array_map(
             static fn (string $file): bool => is_readable(__DIR__ . '/AcfRestUpload/' . $file . '.php'),
             $files

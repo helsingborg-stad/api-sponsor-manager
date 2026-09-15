@@ -7,18 +7,17 @@ namespace ApiSponsorManager\AcfRestUpload;
 use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
 
 /**
- * Registers the "Allow multipart REST upload" setting on ACF file fields.
+ * Registers the "Allow multipart REST upload" setting on ACF image fields.
  *
- * The setting is available on image, file and gallery fields and defaults to
- * false, so existing field groups keep their current behaviour until the
- * setting is explicitly enabled.
+ * The setting defaults to false, so existing image fields keep their current
+ * behaviour until the setting is explicitly enabled.
  */
 class FieldSettings implements Hookable
 {
     /**
      * ACF field types that may accept a multipart REST upload.
      */
-    private const FIELD_TYPES = ['image', 'file', 'gallery'];
+    private const FIELD_TYPES = ['image'];
 
     /**
      * Key used to store the setting on the field.

@@ -583,6 +583,24 @@ class CreateReceiverTest extends NativeTestCase
         self::assertSame([], $this->attachments);
     }
 
+    #[DataProvider('unsupportedProtocolVersions')]
+    public function testRegisteredRouteRejectsUnsupportedProtocolVersionsBeforeSideEffects(string $version): void
+    {
+        $request = $this->request();
+        $request->set_header('X-ACF-Rest-Upload-Version', $version);
+        $before = $this->ids();
+        $response = $this->dispatch($request);
+        self::assertSame(400, $response->get_status(), wp_json_encode($response->get_data()));
+        self::assertSame('acf_rest_upload_unsupported_version', $response->get_data()['code']);
+        self::assertSame($before, $this->ids());
+        self::assertSame([], $this->attachments);
+    }
+
+    public static function unsupportedProtocolVersions(): array
+    {
+        return [['1'], ['3']];
+    }
+
     public function testVersionTwoNeverStartsLegacyOperations(): void
     {
         (new \ApiSponsorManager\AcfRestUpload\Receiver())->addHooks();

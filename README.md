@@ -23,7 +23,7 @@
   - [Installation](#installation)
 - [Usage](#usage)
 - [Upload provider selection](#upload-provider-selection)
-- [Multipart REST upload protocol (v1)](#multipart-rest-upload-protocol-v1)
+- [Multipart REST upload protocol (v2)](#multipart-rest-upload-protocol-v2)
 - [Testing](#testing)
 - [Deploy](#deploy)
 - [Roadmap](#roadmap)
@@ -114,7 +114,6 @@ The selected provider uses these public hooks:
 Only the null fallback loads files from `source/php/AcfRestUpload/`.
 External selection works without that directory. Keep the host bootstrap
 `source/php/UploadProvider.php` and the sponsor integration files available.
-The fallback retains the historical version-1 machinery during migration.
 
 An incompatible descriptor never selects the fallback. An incompatible
 descriptor or missing fallback writes a diagnostic to the PHP error log.
@@ -128,151 +127,59 @@ posts, images, and notifications. Observed failures attempt request-owned
 cleanup. A process crash can leave partial data. Notification delivery is not
 guaranteed across a crash.
 
-## Multipart REST upload protocol (v1)
+## Multipart REST upload protocol (v2)
 
-Sponsor submissions can carry images, files and galleries in a single
-multipart request to the native WordPress endpoints
-`POST /wp-json/wp/v2/sponsor-assignments` and
-`POST /wp-json/wp/v2/sponsor-offerings`. The receiver extends the native REST
-dispatch; ordinary clients are unaffected.
+The embedded receiver supports native collection `POST` creates for
+`/wp/v2/sponsor-assignments` and `/wp/v2/sponsor-offerings`. Each destination
+accepts one top-level image field. The image field must be REST exposed and
+must enable **Allow multipart REST upload**.
 
-### Supported methods and requests
+Send `X-ACF-Rest-Upload-Version: 2`. A value of `$file:<key>` in the destination
+image field references exactly one `_acf_rest_files[<key>]` binary part. The
+receiver accepts existing image IDs when native validation accepts them.
 
-- Only `POST` is supported. Native PHP parses multipart file parts for POST
-  bodies only, so `PUT`/`PATCH` multipart bodies cannot be received.
-- Requests without the `X-ACF-Rest-Upload-Version` header (regular JSON
-  payloads) are never touched and keep their standard WordPress behavior.
-- The sender must additionally hold the WordPress `upload_files` capability.
+The receiver rejects version 1 and all other protocol versions on registered
+route families. It rejects item routes, non-POST methods, galleries, nested
+references, generic files, reserved null or empty markers, and malformed parts
+before it creates media or saves a post. Requests without the header and
+unregistered routes keep native JSON behavior.
 
-### Headers
+The receiver preserves native authorization, field validation, and image
+limits. It accepts at most 8 MiB of uploaded image data and 1 MiB of parameters.
+Invalid MIME returns 415. Size limits return 413. Unsupported requests return
+400. Storage and cleanup failures return controlled 500 errors.
 
-```text
-Idempotency-Key: <client generated UUID>
-X-ACF-Rest-Upload-Version: 1
-```
+The receiver has no idempotency, replay, durable history, update rollback, or
+durable notification delivery. Separate submissions can create duplicate posts,
+images, and notifications. The receiver cleans up resources owned by an
+observed failed request. A crash can leave partial data.
 
-### Payload rules
+The local Database handler keeps `ModularityFrontendForm/afterInsertPost`.
+It sends its normal notification after metadata saving. Version-2 notifications
+send only after the receiver completes the exact request successfully.
 
-- A value of exactly `$file:<key>` references a binary sent as the multipart
-  file part `_acf_rest_files[<key>]`. Keys match `[A-Za-z0-9_-]+`; numeric
-  keys (`$file:0` → `_acf_rest_files[0]`) are supported. The same key may be
-  referenced from several fields and creates exactly one attachment.
-- Bracket paths use explicit numeric indices end to end
-  (`acf[gallery][1]`), so values keep their exact positions.
-- Multipart cannot represent JSON `null` or an empty array, so they travel in
-  two reserved body lists. Both use bracket paths rooted at the request root:
-  - `_acf_rest_nulls[]` — the value is cleared to `null`
-    (`acf[optional_image]`).
-  - `_acf_rest_empty[]` — the value is cleared to an empty list
-    (`acf[gallery]`). The append form (`acf[gallery][]`) also defines the
-    whole list as empty; it never appends an empty item.
-- A null/empty path that collides with a `$file:` reference, a path that is
-  not rooted at `acf`, missing or unexpected file parts, body fields named
-  `_acf_rest_files`, file parts outside `_acf_rest_files`, and nested part
-  names deeper than `_acf_rest_files[<key>]` are rejected with HTTP 400.
-- A referenced field must be an image/file/gallery field with the field
-  setting "Allow multipart REST upload" enabled, must live in exactly one
-  REST exposed field group located on the destination post type, and its name
-  must be unambiguous.
-- A gallery may mix existing destination attachment ids and `$file:` markers;
-  order and existing ids are preserved.
+Existing legacy post metadata and option records remain in the database. They
+are inert under version 2. A rollback to the previous receiver may depend on
+those records. This release does not delete records or install a wildcard
+cleanup migration.
 
-### Idempotency and retries
+The frontend sender keeps its version-1 multipart profile for unrelated
+receivers. Do not select that profile for these sponsor routes.
 
-- The first request with a given key claims it atomically and owns it.
-- While a request with the same key is still running, retries receive
-  `425 Too Early` with a `Retry-After` header. Senders should treat 425 as
-  retryable and honor `Retry-After`.
-- A completed key replays the original result without re-running the native
-  callback: `201 Created` with `{"id": <post id>}` for creates, `200` with
-  `{"id": <post id>}` for updates.
-- New operations retain a fingerprint of request values, filenames, MIME
-  hints, and file bytes. Temporary paths and response controls are excluded.
-  Reusing a key with different data returns `409 acf_rest_upload_key_conflict`
-  before any new save or media creation. Create fingerprints remain with the
-  original post after claim-history cleanup. Legacy records without a
-  fingerprint keep their previous replay behavior because their original
-  input is unavailable. Update replay/conflict protection is bounded by the
-  retained claim history.
-- A completed claim whose post is deleted or no longer has the original post
-  type returns `410 acf_rest_upload_resource_gone`, not a false success.
-- Claims hold an owner token and expire after 15 minutes. Expiry does not
-  permit a new save. Interrupted operations return a controlled 425 recovery
-  response unless the permanent create identity proves full completion.
-  Claims retain operation scope, owned attachment IDs, and progress phase.
-- Every ownership-sensitive claim transition (takeover, adoption, completion,
-  release) is a database-level compare-and-swap on the exact stored claim
-  state, so concurrent senders of the same key serialize on the row and all
-  losers fail closed to replays or 425. Only the transition winner attempts
-  the completion action. The durable attempt is not confirmation of delivery.
-- On failure the receiver deletes the draft it created, restores overwritten
-  ACF values of updates, and deletes only the attachments this request
-  created — old and shared attachments are never removed.
+### Coordinated transition and rollback
 
-### Multipart updates and recovery
+1. Prepare the receiver and sender artifacts.
+2. Stop sponsor submissions.
+3. Deploy both artifacts.
+4. Select the sender `multipart-create` profile.
+5. Run the agreed smoke checks.
+6. Resume sponsor submissions.
 
-- Only native placeholder errors on collected file-reference paths are
-  deferred. Other validation and policy errors remain errors. Ordinary
-  parameters are sanitized once before endpoint permission checks; ACF
-  parameters are sanitized after upload references become attachment IDs.
-- Multipart updates support only `title`, `status`, and `acf`. Other mutable
-  fields fail with `acf_rest_upload_unsupported_update` before saving or uploads.
-  Requests without the protocol header keep native JSON behavior.
-- Before saving, the receiver captures submitted native values and every
-  submitted ACF field by its exact destination field key. ACF snapshots use
-  raw values, not formatted image arrays or display values.
-- Recovery restores these values and checks storage afterward. An unchanged
-  value is not a recovery failure. Absent ACF values remain distinct from
-  stored false/null values, and field references are restored.
-- Failed restoration or media cleanup retains `recovery_failed` evidence and
-  blocks duplicate work. Snapshots are request-local: process interruption
-  requires explicit recovery, not automatic replay of partial work. Custom
-  field hooks that modify other objects require their own compensation.
-- Native sideload destinations are recorded against the exact input temporary
-  file before the move. If attachment insertion fails, recovery removes that
-  file too. Failed file deletion retains its path in the claim for recovery;
-  nested sideloads with a different input file are not owned by the outer request.
-
-### Upload limits and errors
-
-New operations support at most **8 MiB of aggregate file bytes** and **1 MiB
-of JSON-encoded parameter data**. The receiver checks actual file sizes before
-claiming or saving. PHP/web-server request limits still apply before parsing.
-Configure the sender's origin upload limit no higher than 8 MiB and reserve
-at least 256 MiB of PHP memory for the buffered sender and normal image
-processing. This is not a streaming or arbitrary-size upload protocol.
-Decoded image dimensions require appropriate destination image-processing
-limits; the transport byte cap does not bound decoded pixel memory.
-
-Known invalid MIME, empty uploads, and size-limit violations return 415, 400,
-and 413 respectively. PHP temporary-directory/write failures and unknown
-storage errors remain 5xx. Existing explicit error statuses are preserved.
-WordPress's native filename, EXIF title/caption, and alt-text defaults remain
-in effect. Field settings accept group keys and database IDs, and field
-loading preserves stored opt-in intent; the receiver always checks current
-REST exposure separately.
-
-### Notifications
-
-After a protocol request fully succeeds, the receiver attempts
-`AcfRestUpload/afterInsertPost` with the post ID and scoped operation option.
-Replays do not fire this action. Finalization runs at the last filter priority,
-after ordinary REST response filters, for both internal and HTTP dispatch.
-
-Sponsor notifications keep pending templates by operation and post. Both
-submission and publish mail wait for full protocol success. A failed operation
-discards its pending batch. Completed batches send only to that post's
-recipients and are consumed through an atomic durable delivery claim.
-
-Delivery is **at most once**, not exactly once. A crash after the completion
-or delivery claim can lose an email, including remaining messages in a batch.
-`completion_attempted` and `delivery_attempted` record attempts, not confirmed
-delivery. A new process cannot repeat a claimed batch. No automatic outbox
-recovery is provided.
-
-The frontend-form Database path keeps its own
-`ModularityFrontendForm/afterInsertPost` action. It consumes only the queue for
-the supplied post ID. Non-protocol publish behavior remains unchanged.
+Writing this procedure does not authorize its execution. To roll back, stop
+sponsor submissions, restore both previous artifacts, select the previous
+sender profile, run rollback smoke checks, then resume submissions. Historical
+records remain available for the previous receiver. Rollback does not remove
+duplicates or recover data from a process crash.
 
 ## Testing
 

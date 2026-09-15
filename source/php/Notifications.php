@@ -6,10 +6,8 @@ use AcfService\Contracts\GetField;
 use AcfService\Contracts\GetFields;
 use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
 use ApiSponsorManager\Helper\NotificationServices\NotificationService;
-use ApiSponsorManager\AcfRestUpload\IdempotencyStore;
 use WP_Post;
 use WP_REST_Request;
-use WP_Error;
 use WpService\Contracts\__;
 use WpService\Contracts\AddAction;
 use WpService\Contracts\GetEditPostLink;
@@ -17,10 +15,7 @@ use WpService\Contracts\GetEditPostLink;
 class Notifications implements Hookable {
     private array $mailQueue = [];
     private array $requests = [];
-    private array $operationRequests = [];
-    private array $operations = [];
     private array $createQueues = [];
-    private const CONSUMER = 'sponsor_notifications';
 
     public function __construct(
         public AddAction&GetEditPostLink&__ $wpService, 
@@ -72,7 +67,7 @@ class Notifications implements Hookable {
         if ($newStatus === 'draft' && $oldStatus === 'new') {
             foreach ($this->getEmailTemplates() as $template) {
                 if ($template['trigger'] === 'submit' && $post->post_type === $template['post_type']) {
-                    if (!$this->queueForCreate($template, $post) && !$this->queueForOperation($template, $post)) {
+                    if (!$this->queueForCreate($template, $post)) {
                         $this->mailQueue[$post->ID][] = [$template, $post];
                     }
                 }
@@ -85,9 +80,7 @@ class Notifications implements Hookable {
         if ($newStatus === 'publish' && $oldStatus === 'draft') {
             foreach ($this->getEmailTemplates() as $template) {
                 if ($template['trigger'] === 'publish' && $post->post_type === $template['post_type']) {
-                    if (!$this->queueForOperation($template, $post)) {
-                        $this->composeAndSendEmail($template, $post);
-                    }
+                    $this->composeAndSendEmail($template, $post);
                 }
             }
         }
@@ -104,8 +97,8 @@ class Notifications implements Hookable {
 
     public function beforeRestCallbacks($response, $handler, WP_REST_Request $request): mixed
     {
-        $this->requests[spl_object_id($request)] = $request;
         if ($request->get_header('X-ACF-Rest-Upload-Version') === '2') {
+            $this->requests[spl_object_id($request)] = $request;
             // Register after provider boot so this runs after its finalizer, including internal dispatch.
             add_filter('rest_request_after_callbacks', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
         }
@@ -114,13 +107,7 @@ class Notifications implements Hookable {
 
     public function afterRestCallbacks($response, $handler, WP_REST_Request $request): mixed
     {
-        $id = spl_object_id($request);
-        $operation = $this->operationRequests[$id] ?? null;
-        if ($operation === null) {
-            unset($this->requests[$id]);
-        } elseif ($this->operations[$operation]['failed']) {
-            return new WP_Error('acf_rest_upload_notification_state_failed', 'Could not persist notification state.', ['status' => 500]);
-        }
+        unset($this->requests[spl_object_id($request)]);
         return $response;
     }
 
@@ -140,38 +127,6 @@ class Notifications implements Hookable {
         }
     }
 
-    public function beginOperation(string $operation, string $owner, WP_REST_Request $request): void
-    {
-        $id = spl_object_id($request);
-        $this->requests[$id] = $request;
-        $this->operationRequests[$id] = $operation;
-        $this->operations[$operation] = ['owner' => $owner, 'posts' => [], 'failed' => false];
-    }
-
-    public function endOperation(string $operation, WP_REST_Request $request): void
-    {
-        if (isset($this->operations[$operation])) {
-            // This only changes an active claim owned by this operation.
-            // Completed batches were already consumed by their delivery claim.
-            (new IdempotencyStore())->tryRecordCompletionData($operation, $this->operations[$operation]['owner'], self::CONSUMER, []);
-        }
-        unset($this->operations[$operation], $this->operationRequests[spl_object_id($request)], $this->requests[spl_object_id($request)]);
-    }
-
-    private function queueForOperation(array $template, WP_Post $post): bool
-    {
-        $operation = $this->operationRequests[array_key_last($this->requests)] ?? null;
-        if ($operation === null) {
-            return false;
-        }
-        $entry = &$this->operations[$operation];
-        $entry['posts'][$post->ID][hash('sha256', serialize($template))] = $template;
-        if (!(new IdempotencyStore())->tryRecordCompletionData($operation, $entry['owner'], self::CONSUMER, $entry['posts'])) {
-            $entry['failed'] = true;
-        }
-        return true;
-    }
-
     private function queueForCreate(array $template, WP_Post $post): bool
     {
         $id = array_key_last($this->requests);
@@ -181,23 +136,6 @@ class Notifications implements Hookable {
         }
         $this->createQueues[$id][$post->ID][] = [$template, $post];
         return true;
-    }
-
-    public function completeOperation(?int $postId, string $operation): void
-    {
-        $store = new IdempotencyStore();
-        $state = $store->read($operation);
-        $templates = $state['completion_data'][self::CONSUMER][$postId] ?? [];
-        $post = $postId === null ? null : get_post($postId);
-        if ($templates === [] || !$post instanceof WP_Post || $store->completedPostId($state) !== $postId
-            || !$store->tryClaimDelivery($operation, self::CONSUMER, $state)) {
-            return;
-        }
-        // The durable claim records an attempt, not confirmation of delivery.
-        // A crash during this batch can lose its remaining messages.
-        foreach ($templates as $template) {
-            $this->composeAndSendEmail($template, $post);
-        }
     }
 
     public function addHooks(): void
@@ -210,8 +148,5 @@ class Notifications implements Hookable {
         add_filter('rest_request_after_callbacks', [$this, 'afterRestCallbacks'], PHP_INT_MAX - 1, 3);
         add_filter('rest_post_dispatch', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
         $this->wpService->addAction('AcfRestUpload/created', [$this, 'completedCreate'], 1, 3);
-        $this->wpService->addAction('AcfRestUpload/beginOperation', [$this, 'beginOperation'], 1, 3);
-        $this->wpService->addAction('AcfRestUpload/endOperation', [$this, 'endOperation'], 1, 2);
-        $this->wpService->addAction('AcfRestUpload/afterInsertPost', [$this, 'completeOperation'], 1, 2);
     }
 }
