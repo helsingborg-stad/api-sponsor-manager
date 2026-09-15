@@ -22,6 +22,7 @@
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage](#usage)
+- [Upload provider selection](#upload-provider-selection)
 - [Multipart REST upload protocol (v1)](#multipart-rest-upload-protocol-v1)
 - [Testing](#testing)
 - [Deploy](#deploy)
@@ -78,6 +79,54 @@ composer install
 Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources.
 
 _For more examples, please refer to the [Documentation](https://example.com)_
+
+## Upload provider selection
+
+The host selects one receiver at `init` priority 20. It applies
+`AcfRestUpload/provider` to `null`. Null selects the embedded receiver.
+The earlier `ApiSponsorManager/enableCreateUploads` opt-in no longer controls selection.
+
+Register an external provider filter during plugin loading, or at an `init`
+priority below 20. Registering it after selection has no effect on that request.
+Return an array with these values:
+
+- `api_version`: integer `1`.
+- `protocol_versions`: an array containing integer `2`.
+- `boot`: a callable that accepts the injected `WpService` and `AcfService`, in that order.
+
+Provider API version 1 is distinct from HTTP upload protocol version 2.
+The host validates the descriptor before it calls `boot`. Repeated selection
+on the same bootstrap does not call `boot` again. Filters must compose one
+descriptor. The host does not maintain a provider registry.
+
+The selected provider uses these public hooks:
+
+- `AcfRestUpload/destinations` filters an empty array. Each route maps to
+  `post_type` and `image_field`. The host registers both sponsor collections.
+- `AcfRestUpload/imagePolicy` filters resolved native limits. It also receives
+  the field and exact request. Sponsor images retain their native field limits.
+  A provider must enforce field eligibility and authorization separately.
+  Policy filters may tighten limits but cannot remove native restrictions.
+- `AcfRestUpload/created` receives the post ID, attachment ID or null, and exact
+  request. Emit it only after complete success. The sponsor consumer sends
+  queued notifications through this action.
+
+Only the null fallback loads files from `source/php/AcfRestUpload/`.
+External selection works without that directory. Keep the host bootstrap
+`source/php/UploadProvider.php` and the sponsor integration files available.
+The fallback retains the historical version-1 machinery during migration.
+
+An incompatible descriptor never selects the fallback. An incompatible
+descriptor or missing fallback writes a diagnostic to the PHP error log.
+Version-2 requests on registered collection and item route families receive
+`acf_rest_upload_unavailable` with HTTP 503. Requests without the version-2
+header and unrelated routes remain unchanged.
+
+Version 2 supports native collection creates with at most one top-level image.
+It does not provide idempotency. Repeated submissions can create duplicate
+posts, images, and notifications. Observed failures attempt request-owned
+cleanup. A process crash can leave partial data. Notification delivery is not
+guaranteed across a crash.
 
 ## Multipart REST upload protocol (v1)
 
