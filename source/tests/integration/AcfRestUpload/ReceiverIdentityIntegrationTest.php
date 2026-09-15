@@ -7,11 +7,10 @@ namespace ApiSponsorManager\Test\AcfRestUpload;
 use ApiSponsorManager\AcfRestUpload\IdempotencyStore;
 use ApiSponsorManager\AcfRestUpload\Receiver;
 use ApiSponsorManager\Offering\PostType as OfferingPostType;
-use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 use WP_REST_Server;
-use WP_UnitTestCase;
+use ApiSponsorManager\Test\NativeTestCase;
 
 /**
  * Database-backed fixture for the permanent create identity.
@@ -21,16 +20,16 @@ use WP_UnitTestCase;
  * row as history, that unresolved claims are never pruned as ordinary
  * history, and that the identity is removed with its post.
  *
- * A fixture callback inserts posts and fires the REST insert hook. This is
- * not proof of native sponsor-controller saving, ACF saving, or media upload.
- * Replays must bypass that callback and leave notifications and posts unchanged.
+ * Native sponsor controllers insert posts and save production ACF fields.
+ * Replays must bypass native saving and leave notifications and posts unchanged.
+ * @expectedIncorrectUsage rest_handle_multi_type_schema
  *
  * Requires the WordPress core test bootstrap. Named ...IntegrationTest so
  * the unit suite's ReceiverIdentityTest keeps its own fully qualified name.
  *
- * Run with: vendor/bin/phpunit --testsuite integration
+ * Run with: composer test:integration
  */
-class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
+class ReceiverIdentityIntegrationTest extends NativeTestCase
 {
     private const ROUTE = '/wp/v2/sponsor-offerings';
 
@@ -50,6 +49,7 @@ class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
     private array $posts = [];
 
     private WP_REST_Server $server;
+    private int $image;
 
     /** @var callable(int): void The completion listener this test registered. */
     private $notificationListener;
@@ -57,7 +57,25 @@ class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
     public function set_up(): void
     {
         parent::set_up();
+        add_action('doing_it_wrong_run', static function (string $function, string $message): void {
+            if ($function === 'rest_handle_multi_type_schema') {
+                self::assertStringContainsString('acf[contact_method]', $message);
+            }
+        }, 10, 2);
         wp_set_current_user(self::factory()->user->create(['role' => 'administrator']));
+        global $wp_filter, $wp_rest_server;
+        foreach ($wp_filter as $hook => $registry) {
+            foreach ($registry->callbacks as $priority => $callbacks) {
+                foreach ($callbacks as $callback) {
+                    $function = $callback['function'];
+                    if (is_array($function) && $function[0] instanceof Receiver) {
+                        remove_filter($hook, $function, $priority);
+                    }
+                }
+            }
+        }
+        $wp_rest_server = null;
+        $this->image = self::factory()->attachment->create_upload_object(DIR_TESTDATA . '/images/canola.jpg');
         $this->receiver = new Receiver();
         $this->receiver->addHooks();
         $this->store = new IdempotencyStore();
@@ -67,32 +85,10 @@ class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
         };
         add_action(Receiver::ACTION_AFTER_INSERT, $this->notificationListener);
 
-        // This server belongs only to the fixture. Never replace global routes.
-        $this->server = new WP_REST_Server();
-        $postType = $this->registeredOfferingType();
-
-        $this->server->register_route('wp/v2', self::ROUTE, [[
-            'methods' => 'POST',
-            'permission_callback' => static fn (): bool => true,
-            'callback' => function (WP_REST_Request $request) use ($postType) {
-                $this->saveCount++;
-
-                $postId = (int) wp_insert_post([
-                    'post_type' => $postType,
-                    'post_status' => 'publish',
-                    'post_title' => 'identity integration ' . wp_generate_uuid4(),
-                ]);
-
-                if ($postId === 0) {
-                    return new WP_Error('rest_insert_failed', 'The post could not be created.', ['status' => 500]);
-                }
-
-                $this->posts[] = $postId;
-                do_action('rest_insert_' . $postType, get_post($postId), $request, true);
-
-                return new WP_REST_Response(['id' => $postId], 201);
-            },
-        ]]);
+        add_action('rest_insert_offering', function ($post): void {
+            $this->saveCount++;
+            $this->posts[] = (int) $post->ID;
+        });
     }
 
     public function tear_down(): void
@@ -100,8 +96,8 @@ class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
         remove_filter('rest_pre_dispatch', [$this->receiver, 'preDispatch'], 1);
         remove_filter('rest_request_before_callbacks', [$this->receiver, 'beforeCallbacks'], 10);
         remove_filter('rest_dispatch_request', [$this->receiver, 'dispatchRequest'], 10);
-        remove_filter('rest_request_after_callbacks', [$this->receiver, 'afterCallbacks'], 10);
-        remove_filter('rest_post_dispatch', [$this->receiver, 'postDispatch'], 10);
+        remove_filter('rest_request_after_callbacks', [$this->receiver, 'afterCallbacks'], PHP_INT_MAX);
+        remove_filter('rest_post_dispatch', [$this->receiver, 'postDispatch'], PHP_INT_MAX);
 
         // Only the listener this test registered; the completion action is
         // shared production surface and is never bulk-removed here.
@@ -258,6 +254,10 @@ class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
     private function dispatch(string $uuid): WP_REST_Response
     {
         $request = $this->request($uuid);
+        $_SERVER['REQUEST_METHOD'] = 'POST';
+        $GLOBALS['wp']->query_vars['rest_route'] = self::ROUTE;
+        acf_get_instance('ACF_Rest_Api')->initialize(null, null, $request);
+        $this->server = rest_get_server();
         $this->options[] = $this->idempotencyOption($uuid);
         $response = $this->server->dispatch($request);
 
@@ -288,7 +288,10 @@ class ReceiverIdentityIntegrationTest extends WP_UnitTestCase
         $request = new WP_REST_Request('POST', self::ROUTE);
         $request->set_header('X-ACF-Rest-Upload-Version', '1');
         $request->set_header('Idempotency-Key', $uuid);
-        $request->set_body_params(['acf' => ['image' => 123]]);
+        $request->set_body_params(['title' => 'Identity regression', 'status' => 'draft', 'acf' => [
+            'image' => $this->image, 'date' => '20260915', 'time' => '12:00:00', 'due_date' => '20260930', 'due_time' => '12:00:00', 'description' => 'Identity regression', 'contact_method' => ['mail'],
+            'organization_name' => 'Isolated organization', 'organization_contact' => 'Test contact', 'organization_email' => 'contact@example.test', 'organization_phone' => 123456, 'organization_number' => '123456-7890',
+        ]]);
 
         return $request;
     }

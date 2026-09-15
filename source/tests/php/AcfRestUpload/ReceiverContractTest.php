@@ -302,7 +302,7 @@ class ReceiverContractTest extends PluginTestCase
         ]);
         Functions\when('acf_get_fields')->alias(static fn ($group) => $group === 'group_1' ? [$first] : [$second]);
         Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
-        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('apply_filters')->returnArg(2);
         Functions\when('acf_get_field')->alias(static fn ($name) => $first);
         Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_1', 'show_in_rest' => 1]);
 
@@ -342,7 +342,7 @@ class ReceiverContractTest extends PluginTestCase
             ] : []);
         Functions\when('acf_get_fields')->alias(static fn ($group) => $group === 'group_visible' ? [$visible] : [$hidden]);
         Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
-        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('apply_filters')->returnArg(2);
         Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_visible', 'show_in_rest' => 1]);
 
         $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
@@ -368,7 +368,7 @@ class ReceiverContractTest extends PluginTestCase
             ] : []);
         Functions\when('acf_get_fields')->alias(static fn ($group) => $group === 'group_a' ? [$first] : [$second]);
         Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
-        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('apply_filters')->returnArg(2);
         Functions\when('acf_get_field_group')->alias(static fn ($parent) => ['key' => 'group_a', 'show_in_rest' => 1]);
 
         $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
@@ -430,7 +430,7 @@ class ReceiverContractTest extends PluginTestCase
         Functions\when('acf_get_field_groups')->alias(static fn ($args) => ($args['post_type'] ?? null) === $postType ? [$group] : []);
         Functions\when('acf_get_fields')->alias(static fn (): array => [$field]);
         Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
-        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('apply_filters')->returnArg(2);
         Functions\when('acf_get_field_group')->alias(static fn ($parent) => is_numeric($parent) && (int) $parent === $groupId ? $group : false);
 
         $request = $this->request(['image' => '$file:hero'], ['hero' => $this->fileRecord()]);
@@ -492,7 +492,7 @@ class ReceiverContractTest extends PluginTestCase
             ? [['key' => 'group_offer', 'show_in_rest' => 1]] : []);
         Functions\when('acf_get_fields')->alias(static fn (): array => [$offeringField]);
         Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
-        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('apply_filters')->returnArg(2);
         // A global lookup by name would return a different field; the
         // resolution must never perform it.
         Functions\expect('acf_get_field')->never();
@@ -590,7 +590,7 @@ class ReceiverContractTest extends PluginTestCase
         );
         Functions\when('acf_get_fields')->alias(static fn ($group) => $resolved);
         Functions\when('acf_get_field_type')->alias(static fn (string $type): object => (object) ['name' => $type, 'show_in_rest' => true]);
-        Functions\when('apply_filters')->returnArg(1);
+        Functions\when('apply_filters')->returnArg(2);
         Functions\when('acf_get_field')->alias(static fn ($name) => match ($name) {
             'gallery' => $gallery,
             'image' => $primary,

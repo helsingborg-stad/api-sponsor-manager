@@ -27,4 +27,5 @@
 /node_modules/
 /vendor/
 /.phpunit.cache/
+/.phpunit.integration-cache/
 /build/

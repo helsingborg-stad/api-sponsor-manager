@@ -190,36 +190,72 @@ the supplied post ID. Non-protocol publish behavior remains unchanged.
 
 ## Testing
 
-Two separate suites exist. All commands below are meant to be run by a human
-in a prepared environment.
+Run tests only in isolated, non-deployed environments. The lockfile includes
+Brain Monkey, Mockery, WordPress 7.1, its matching test library, PHPUnit
+polyfills, and the plugin's ACF import helper.
 
-Unit suite (`source/tests/php`): standalone, no WordPress needed, uses Brain
-Monkey + Mockery.
+### Standalone tests
 
-> **Blocker:** `composer.lock` does not yet contain the dev dependencies
-> `brain/monkey` and `mockery/mockery`, although the unit suite (via
-> `PluginTestCase`) requires them. The lock must be regenerated once with
-> `composer update` before any test can boot; this is intentionally not done
-> by hand.
+The unit suite (`source/tests/php`, `phpunit.xml`) does not load WordPress.
 
 ```sh
-composer update            # once: writes brain/monkey + mockery into composer.lock
-composer lint              # mago lint
-composer test              # unit suite (vendor/bin/phpunit --testsuite unit)
+composer install
+env -u WP_TESTS_DIR composer test
+composer lint
 ```
 
-Integration suite (`source/tests/integration`): runs against a real
-WordPress test library plus ACF and creates real media. It is excluded from
-the unit run and requires the WordPress core test bootstrap:
+### Native integration tests
+
+The integration suite uses `phpunit-integration.xml`. It boots this plugin's
+entry file, its production ACF groups, native sponsor controllers, and real
+database/media operations. It does not replace sponsor routes. WordPress's
+test library manages database transactions; PHPUnit global serialization is
+disabled because it invalidates the live database connection.
+
+Prerequisites:
+- A **disposable** MySQL/MariaDB database whose name starts with `sponsor_test_`.
+- PHP with mysqli, GD, cURL, and process/loopback-server support.
+- An isolated licensed ACF PRO installation, not a live plugin checkout.
+- A sender worktree for the wire fixture. Only its dependency-free encoder is loaded.
+
+**The WordPress test bootstrap recreates tables. Never supply a live database.**
 
 ```sh
-export WP_TESTS_DIR=/path/to/wordpress-tests/lib
-export ACF_PLUGIN_FILE=/path/to/advanced-custom-fields-pro/acf.php
-composer test:integration  # vendor/bin/phpunit --testsuite integration
+export SPONSOR_INTEGRATION_TESTS=1
+export SPONSOR_TEST_DB_NAME=sponsor_test_receiver
+export SPONSOR_TEST_DB_HOST=localhost:/path/to/isolated/mysql.sock
+export SPONSOR_TEST_DB_USER=test_user
+export SPONSOR_TEST_DB_PASSWORD=test_password
+export ACF_PLUGIN_FILE=/path/to/isolated/advanced-custom-fields-pro/acf.php
+export SENDER_PLUGIN_DIR=/path/to/modularity-frontend-form-worktree
+composer test:integration
 ```
 
-The bootstrap activates ACF (when `ACF_PLUGIN_FILE` is set) and this plugin
-via `muplugins_loaded`, so no extra test plugin is needed.
+`WP_TESTS_DIR` defaults to the installed `vendor/wp-phpunit/wp-phpunit` library.
+The bootstrap blocks real mail and external WordPress HTTP requests. All
+addresses and input data in the tests are synthetic.
+
+The `wire` group sends the real sender encoder's body to a temporary PHP
+loopback server. PHP parses `$_POST` and `$_FILES`; the fixture transfers those
+parsed values and file bytes into native WordPress dispatch. It tests numeric
+keys, nested nulls, empty arrays, mixed gallery order, and binary preservation.
+This is parser-to-native-dispatch verification, not authentication or routing
+through a deployed web server. A sandbox must permit HTTP to `127.0.0.1`.
+
+For a database-only run when loopback HTTP is unavailable:
+
+```sh
+vendor/bin/phpunit --configuration phpunit-integration.xml --exclude-group wire
+```
+
+Such a run does **not** complete the wire gate. Missing sender configuration
+also skips that gate and must be reported.
+
+Known upstream compatibility: ACF's select schema uses `int` instead of
+`integer`. Native tests explicitly expect WordPress's corresponding notice
+only for `acf[contact_method]`; other notices still fail. `NativeTestCase`
+bridges WordPress's legacy expected-notice reader to PHPUnit 11 without
+disabling notice assertions. Upstream PHPUnit deprecation reports remain visible.
 
 ## Deploy
 

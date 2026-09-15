@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace ApiSponsorManager\Test\AcfRestUpload;
 
 use ApiSponsorManager\AcfRestUpload\IdempotencyStore;
-use WP_UnitTestCase;
+use ApiSponsorManager\Test\NativeTestCase;
 
 /**
  * Real-database regression for the insert-only fresh claim acquisition.
@@ -21,9 +21,9 @@ use WP_UnitTestCase;
  * Requires the WordPress core test bootstrap. Named ...IntegrationTest so
  * the unit suite's IdempotencyStoreTest keeps its own fully qualified name.
  *
- * Run with: vendor/bin/phpunit --testsuite integration
+ * Run with: composer test:integration
  */
-class IdempotencyStoreIntegrationTest extends WP_UnitTestCase
+class IdempotencyStoreIntegrationTest extends NativeTestCase
 {
     private IdempotencyStore $store;
 

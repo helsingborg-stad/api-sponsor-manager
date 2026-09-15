@@ -5,7 +5,7 @@
     "license": "MIT",
     "scripts": {
         "test": "vendor/bin/phpunit --testsuite unit",
-        "test:integration": "vendor/bin/phpunit --testsuite integration",
+        "test:integration": "vendor/bin/phpunit --configuration phpunit-integration.xml",
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit --testsuite unit",
         "lint": "vendor/bin/mago lint",
         "fix": "vendor/bin/mago lint --format-after-fix --fix",
@@ -35,7 +35,11 @@
         "phpunit/phpunit": "^11.5",
         "carthage-software/mago": "^1.6",
         "brain/monkey": "^2.6",
-        "mockery/mockery": "^1.6"
+        "mockery/mockery": "^1.6",
+        "wp-phpunit/wp-phpunit": "7.1.0",
+        "johnpbloch/wordpress-core": "7.1.0",
+        "yoast/phpunit-polyfills": "^4.0",
+        "helsingborg-stad/acf-export-manager": "^1.0"
     },
     "config": {
         "allow-plugins": {
