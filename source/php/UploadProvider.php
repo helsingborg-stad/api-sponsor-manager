@@ -31,29 +31,43 @@ final class UploadProvider
             $this->bootEmbedded();
             return;
         }
-        if (!is_array($provider) || ($provider['api_version'] ?? null) !== 1
-            || !is_array($provider['protocol_versions'] ?? null) || !in_array(2, $provider['protocol_versions'], true)
-            || !is_callable($provider['boot'] ?? null)) {
+        if (!$this->isValidDescriptor($provider)) {
             $this->unavailable('Incompatible provider. Expected API 1, HTTP protocol 2, and callable boot.');
             return;
         }
         ($provider['boot'])($this->wpService, $this->acfService);
     }
 
+    private function isValidDescriptor(mixed $provider): bool
+    {
+        return is_array($provider)
+            && ($provider['api_version'] ?? null) === 1
+            && is_array($provider['protocol_versions'] ?? null)
+            && in_array(2, $provider['protocol_versions'], true)
+            && is_callable($provider['boot'] ?? null);
+    }
+
     private function bootEmbedded(): void
     {
         // Keep the historical version-1 machinery until the separate removal task.
-        foreach (['CreateReceiver', 'CreateImage', 'FieldSettings', 'Receiver', 'IdempotencyStore',
-            'BracketPath', 'InvalidRequestException', 'ProtocolV1', 'NullInjector', 'FileReferenceCollector',
-            'OperationFingerprint', 'FileReference', 'PartKeyValidator', 'UpdateSnapshot'] as $file) {
-            if (!is_readable(__DIR__ . '/AcfRestUpload/' . $file . '.php')) {
-                $this->unavailable('Embedded provider files are unavailable.');
-                return;
-            }
+        if (!$this->hasEmbeddedFiles()) {
+            $this->unavailable('Embedded provider files are unavailable.');
+            return;
         }
         (new AcfRestUpload\FieldSettings())->addHooks();
         (new AcfRestUpload\Receiver())->addHooks();
         (new AcfRestUpload\CreateReceiver($this->wpService, $this->acfService))->addHooks();
+    }
+
+    private function hasEmbeddedFiles(): bool
+    {
+        $files = ['CreateReceiver', 'CreateImage', 'FieldSettings', 'Receiver', 'IdempotencyStore',
+            'BracketPath', 'InvalidRequestException', 'ProtocolV1', 'NullInjector', 'FileReferenceCollector',
+            'OperationFingerprint', 'FileReference', 'PartKeyValidator', 'UpdateSnapshot'];
+        return !in_array(false, array_map(
+            static fn (string $file): bool => is_readable(__DIR__ . '/AcfRestUpload/' . $file . '.php'),
+            $files
+        ), true);
     }
 
     private function unavailable(string $diagnostic): void
@@ -67,7 +81,8 @@ final class UploadProvider
     {
         if ($request->get_header('X-ACF-Rest-Upload-Version') !== '2') { return $response; }
         foreach ($this->wpService->applyFilters('AcfRestUpload/destinations', []) as $route => $destination) {
-            if ($request->get_route() === $route || str_starts_with($request->get_route(), $route . '/')) {
+            // The trailing slash makes an exact match and subroutes a single prefix check.
+            if (str_starts_with($request->get_route() . '/', $route . '/')) {
                 return new \WP_Error('acf_rest_upload_unavailable', 'The image upload provider is unavailable.', ['status' => 503]);
             }
         }

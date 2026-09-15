@@ -67,7 +67,7 @@ final class UploadProviderIsolationTest extends PluginTestCase
                 }] : null;
             $wp->shouldReceive('applyFilters')->once()->with('AcfRestUpload/provider', null)->andReturn($descriptor);
             new App($wp, $acf, Mockery::mock(NotificationService::class), $scheduler);
-            self::assertSame($absent ? $fixture . '/App.php' : $source . '/App.php', (new \ReflectionClass(App::class))->getFileName());
+            self::assertSame($absent ? realpath($fixture) . '/App.php' : $source . '/App.php', (new \ReflectionClass(App::class))->getFileName());
             self::assertSame(0, $boots);
             foreach ($hooks['init'] as [$callback, $priority]) {
                 if ($priority === 20) { $callback(); $callback(); }
