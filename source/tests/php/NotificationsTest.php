@@ -98,6 +98,25 @@ class NotificationsTest extends PluginTestCase
         self::assertSame([], $this->mail->sent);
     }
 
+    public function testNestedNativeRequestKeepsItsNotificationOutsideTheVersionTwoQueue(): void
+    {
+        $outer = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
+        $outer->set_header('X-ACF-Rest-Upload-Version', '2');
+        $this->notifications->beforeRestCallbacks(null, [], $outer);
+        $nested = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
+        $this->notifications->beforeRestCallbacks(null, [], $nested);
+        $this->notifications->onSubmitted('draft', 'new', $this->post(88));
+        $this->notifications->sendEmailsAfterMetaHasBeenSaved(88);
+        self::assertSame([['88@example.test']], array_column($this->mail->sent, 'recipients'));
+        $this->notifications->afterRestCallbacks(null, [], $nested);
+        $this->notifications->onSubmitted('draft', 'new', $this->post(77));
+        $this->notifications->sendEmailsAfterMetaHasBeenSaved(77);
+        self::assertCount(1, $this->mail->sent, 'The outer create must still wait for completion.');
+        $this->notifications->afterRestCallbacks(null, [], $outer);
+        $this->notifications->completedCreate(77, null, $outer);
+        self::assertSame([['88@example.test'], ['77@example.test']], array_column($this->mail->sent, 'recipients'));
+    }
+
     private function begin(string $operation): WP_REST_Request
     {
         $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
