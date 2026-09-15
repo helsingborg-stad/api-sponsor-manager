@@ -162,6 +162,10 @@ X-ACF-Rest-Upload-Version: 1
 
 ### Multipart updates and recovery
 
+- Only native placeholder errors on collected file-reference paths are
+  deferred. Other validation and policy errors remain errors. Ordinary
+  parameters are sanitized once before endpoint permission checks; ACF
+  parameters are sanitized after upload references become attachment IDs.
 - Multipart updates support only `title`, `status`, and `acf`. Other mutable
   fields fail with `acf_rest_upload_unsupported_update` before saving or uploads.
   Requests without the protocol header keep native JSON behavior.
@@ -179,6 +183,25 @@ X-ACF-Rest-Upload-Version: 1
   file before the move. If attachment insertion fails, recovery removes that
   file too. Failed file deletion retains its path in the claim for recovery;
   nested sideloads with a different input file are not owned by the outer request.
+
+### Upload limits and errors
+
+New operations support at most **8 MiB of aggregate file bytes** and **1 MiB
+of JSON-encoded parameter data**. The receiver checks actual file sizes before
+claiming or saving. PHP/web-server request limits still apply before parsing.
+Configure the sender's origin upload limit no higher than 8 MiB and reserve
+at least 256 MiB of PHP memory for the buffered sender and normal image
+processing. This is not a streaming or arbitrary-size upload protocol.
+Decoded image dimensions require appropriate destination image-processing
+limits; the transport byte cap does not bound decoded pixel memory.
+
+Known invalid MIME, empty uploads, and size-limit violations return 415, 400,
+and 413 respectively. PHP temporary-directory/write failures and unknown
+storage errors remain 5xx. Existing explicit error statuses are preserved.
+WordPress's native filename, EXIF title/caption, and alt-text defaults remain
+in effect. Field settings accept group keys and database IDs, and field
+loading preserves stored opt-in intent; the receiver always checks current
+REST exposure separately.
 
 ### Notifications
 

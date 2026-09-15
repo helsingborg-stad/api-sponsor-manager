@@ -286,6 +286,50 @@ class ReceiverTest extends NativeTestCase
         self::assertSame([], $this->mail);
     }
 
+    public function testEarlierAcfPolicyErrorIsNotMistakenForAPlaceholderError(): void
+    {
+        $request = $this->request();
+        add_filter('rest_request_before_callbacks', static function ($response, $handler, $actual) use ($request) {
+            return $actual === $request ? new WP_Error('rest_invalid_param', 'Policy rejected ACF.', ['status' => 403, 'params' => ['acf' => 'Policy rejected ACF.']]) : $response;
+        }, 5, 3);
+        self::assertSame(403, $this->dispatch($request)->get_status());
+        self::assertFalse(get_option($this->option($request)));
+        self::assertSame([], $this->ids('attachment'));
+        self::assertSame([], $this->mail);
+    }
+
+    public function testOrdinaryParametersAreSanitizedOnceBeforeNativePermission(): void
+    {
+        $calls = 0;
+        $permissionChecked = false;
+        add_filter('rest_endpoints', static function (array $routes) use (&$calls, &$permissionChecked): array {
+            $wrapped = false;
+            foreach ($routes['/wp/v2/sponsor-offerings'] as &$handler) {
+                if (!is_array($handler) || !is_array($handler['callback'] ?? null) || $handler['callback'][1] !== 'create_item') { continue; }
+                $wrapped = true;
+                $handler['args']['title']['sanitize_callback'] = static function ($title) use (&$calls) {
+                    $calls++;
+                    return trim($title);
+                };
+                $nativePermission = $handler['permission_callback'];
+                $handler['permission_callback'] = static function ($request) use ($nativePermission, &$permissionChecked) {
+                    self::assertSame('Clean title', $request['title']);
+                    $permissionChecked = true;
+                    return $nativePermission($request);
+                };
+            }
+            self::assertTrue($wrapped, 'The fixture must wrap the real native create permission callback.');
+            return $routes;
+        });
+        $request = $this->request();
+        $request->set_param('title', '  Clean title  ');
+        $response = $this->dispatch($request);
+        self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
+        self::assertTrue($permissionChecked);
+        self::assertSame(1, $calls);
+        self::assertSame('Clean title', get_post($response->get_data()['id'])->post_title);
+    }
+
     public function testLateFailureRemovesNewPostAndMediaWithoutMail(): void
     {
         $beforePosts = $this->ids('offering');
@@ -312,6 +356,46 @@ class ReceiverTest extends NativeTestCase
         self::assertNull(get_post($created));
         self::assertSame($before, $this->ids('offering'));
         self::assertSame([], $this->mail);
+    }
+
+    public function testNativeStorageFailureRemainsAServerError(): void
+    {
+        add_filter('wp_handle_sideload_prefilter', static function (array $file): array {
+            $file['error'] = 'Failed to write file to disk.';
+            return $file;
+        });
+        self::assertSame(500, $this->dispatch($this->request())->get_status());
+        self::assertSame([], $this->ids('attachment'));
+        self::assertSame([], $this->ids('offering'));
+        self::assertSame([], $this->mail);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidUploads')]
+    public function testMimeEmptyAndOversizeUploadsAreClientErrors(string $kind, int $status): void
+    {
+        $request = $this->request();
+        $files = $request->get_file_params();
+        $path = $files['_acf_rest_files']['hero']['tmp_name'];
+        if ($kind === 'limit') {
+            $handle = fopen($path, 'c+b');
+            ftruncate($handle, 8 * 1024 * 1024 + 1);
+            fclose($handle);
+        } else {
+            file_put_contents($path, $kind === 'empty' ? '' : 'This is not a JPEG.');
+        }
+        clearstatcache(true, $path);
+        $files['_acf_rest_files']['hero']['size'] = filesize($path);
+        $request->set_file_params($files);
+        self::assertSame($status, $this->dispatch($request)->get_status());
+        self::assertFalse(get_option($this->option($request)));
+        self::assertSame([], $this->ids('attachment'));
+        self::assertSame([], $this->ids('offering'));
+        self::assertSame([], $this->mail);
+    }
+
+    public static function invalidUploads(): array
+    {
+        return [['mime', 415], ['empty', 400], ['limit', 413]];
     }
 
     #[\PHPUnit\Framework\Attributes\DataProvider('fileDeletionOutcomes')]

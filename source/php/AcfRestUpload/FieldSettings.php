@@ -39,8 +39,8 @@ class FieldSettings implements Hookable
     /**
      * Render the checkbox field setting.
      *
-     * The setting is only available for fields whose group is exposed through
-     * the REST API; non-REST groups never render or enable it.
+     * Known non-REST groups do not render the control. Runtime authorization
+     * remains independent of the stored opt-in value.
      *
      * @param array $field
      */
@@ -63,20 +63,13 @@ class FieldSettings implements Hookable
     /**
      * Default the setting to false when it has not been configured.
      *
-     * Fields that belong to a non-REST group are forced to false so the setting
-     * cannot be enabled for them.
+     * Preserve stored intent. The receiver independently checks current REST exposure.
      *
      * @param array $field
      * @return array
      */
     public function defaultSetting(array $field): array
     {
-        if (!$this->isRestEnabledGroup($field)) {
-            $field[self::SETTING_NAME] = false;
-
-            return $field;
-        }
-
         $field[self::SETTING_NAME] ??= false;
 
         return $field;
@@ -99,7 +92,7 @@ class FieldSettings implements Hookable
 
         $parent = $field['parent'] ?? '';
 
-        if (!is_string($parent) || $parent === '') {
+        if ((!is_string($parent) && !is_int($parent)) || $parent === '' || $parent === 0) {
             return true;
         }
 

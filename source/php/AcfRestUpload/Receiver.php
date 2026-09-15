@@ -390,10 +390,42 @@ class Receiver implements Hookable
             return $response;
         }
 
-        // Core skips sanitization when validation fails. Repeat it only then.
+        $details = $data['details'] ?? null;
+        if (!is_array($details) || !is_array($details['acf'] ?? null)) {
+            return $response;
+        }
+        $detail = $details['acf'];
+        $fieldData = $detail['data'] ?? null;
+        if (!is_array($fieldData) || !in_array($detail['code'] ?? null, ['rest_invalid_param', 'rest_invalid_type'], true)) {
+            return $response;
+        }
+        $referencePaths = array_map(
+            static fn (FileReference $reference): string => BracketPath::format(['acf', ...BracketPath::parse($reference->path)]),
+            $this->contexts[$contextId]['references']
+        );
+        if (!in_array($fieldData['param'] ?? null, $referencePaths, true)
+            || (($detail['code'] ?? null) === 'rest_invalid_param' && ($fieldData['value'] ?? null) !== 0)) {
+            return $response;
+        }
+
+        // Core skipped sanitization. Ordinary parameters must be ready for permission checks.
+        $args = $request->get_attributes()['args'] ?? [];
+        $sanitized = $this->sanitizeSubset($request, array_diff_key($args, [self::ACF_PARAM => true]));
+        if (is_wp_error($sanitized)) { return $sanitized; }
         $this->contexts[$contextId]['needsSanitization'] = true;
 
         return null;
+    }
+
+    private function sanitizeSubset(WP_REST_Request $request, array $args): mixed
+    {
+        $attributes = $request->get_attributes();
+        $request->set_attributes(array_replace($attributes, ['args' => $args]));
+        try {
+            return $request->sanitize_params();
+        } finally {
+            $request->set_attributes($attributes);
+        }
     }
 
     /**
@@ -526,7 +558,7 @@ class Receiver implements Hookable
             ]);
 
             if (is_wp_error($attachmentId)) {
-                return $this->classifyUploadError($attachmentId);
+                return $this->classifyUploadError($attachmentId, $file);
             }
 
             $this->contexts[$contextId]['attachments'][] = (int) $attachmentId;
@@ -557,7 +589,8 @@ class Receiver implements Hookable
         }
 
         if ($this->contexts[$contextId]['needsSanitization']) {
-            $sanitization = $request->sanitize_params();
+            $args = $request->get_attributes()['args'] ?? [];
+            $sanitization = $this->sanitizeSubset($request, array_intersect_key($args, [self::ACF_PARAM => true]));
             if (is_wp_error($sanitization)) {
                 return $sanitization;
             }
@@ -2006,10 +2039,22 @@ class Receiver implements Hookable
      * Classify a media library upload failure into a controlled client/server
      * error, keeping the original message.
      */
-    private function classifyUploadError(WP_Error $uploadError): WP_Error
+    private function classifyUploadError(WP_Error $uploadError, array $file): WP_Error
     {
+        $data = $uploadError->get_error_data();
+        if (is_array($data) && is_numeric($data['status'] ?? null) && $data['status'] >= 400 && $data['status'] <= 599) {
+            return $uploadError;
+        }
         $message = $uploadError->get_error_message();
         $lowered = strtolower($message);
+
+        // Native MIME inspection avoids relying only on translated error text.
+        if (is_readable($file['tmp_name']) && !current_user_can('unfiltered_upload')) {
+            $type = wp_check_filetype_and_ext($file['tmp_name'], $file['name']);
+            if (!$type['ext'] || !$type['type']) {
+                return $this->error('acf_rest_upload_invalid_file_type', 415, $message);
+            }
+        }
 
         if (str_contains($lowered, 'could not be moved')) {
             return $this->error('acf_rest_upload_move_failed', 500, $message);
@@ -2019,7 +2064,13 @@ class Receiver implements Hookable
             return $this->error('acf_rest_upload_invalid_file_type', 415, $message);
         }
 
-        return $this->error('acf_rest_upload_invalid_file', 400, $message);
+        if (str_contains($lowered, 'exceeds')) {
+            return $this->error('acf_rest_upload_too_large', 413, $message);
+        }
+        if (str_contains($lowered, 'empty') || str_contains($lowered, 'partially uploaded') || str_contains($lowered, 'upload test')) {
+            return $this->error('acf_rest_upload_invalid_file', 400, $message);
+        }
+        return $this->error('acf_rest_upload_failed', 500, $message);
     }
 
     /**
