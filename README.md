@@ -204,6 +204,14 @@ env -u WP_TESTS_DIR composer test
 composer lint
 ```
 
+Mago is pinned to 1.8.0 because this release does not autoload its internal
+helper functions. Releases that autoload these functions can cause a fatal
+`Cannot redeclare Mago\Internal\locked()` when Municipio loads its own copy.
+Keep this pin until a replacement has been verified with both autoloaders.
+After pulling this change, run `composer install` in the plugin directory to
+replace an incompatible installed version and regenerate the autoloader.
+Do not edit generated files under `vendor/`.
+
 ### Native integration tests
 
 The integration suite uses `phpunit-integration.xml`. It boots this plugin's
@@ -259,7 +267,9 @@ disabling notice assertions. Upstream PHPUnit deprecation reports remain visible
 
 ## Deploy
 
-Instructions for deploys.
+Install production dependencies with `composer install --no-dev --prefer-dist`
+(also used by `build.php`). Do not deploy a development `vendor/` directory:
+Mago and the test tools are not runtime dependencies.
 
 ## Roadmap
 
