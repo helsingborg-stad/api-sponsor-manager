@@ -17,7 +17,7 @@ use WpService\WpService;
 
 class AppTest extends PluginTestCase
 {
-    private function makeApp(AppSchedulerRecorder $scheduler): App
+    private function makeApp(AppSchedulerRecorder $scheduler, ?callable $configure = null): App
     {
         // WpService method defaults refer to WordPress result-format constants.
         foreach (['OBJECT', 'ARRAY_A', 'ARRAY_N'] as $format) {
@@ -26,7 +26,10 @@ class AppTest extends PluginTestCase
             }
         }
         $wp = Mockery::mock(WpService::class);
-        $wp->shouldReceive('addAction')->andReturn(true);
+        $wp->shouldReceive('addAction')->andReturn(true)->byDefault();
+        $wp->shouldReceive('addFilter')->once()
+            ->with('AcfRestUpload/destinations', Mockery::type('callable'))->andReturn(true);
+        if ($configure !== null) { $configure($wp); }
 
         return new App(
             $wp,
@@ -71,6 +74,31 @@ class AppTest extends PluginTestCase
         self::assertInstanceOf(DeleteExpiredPost::class, $callback[0]);
         self::assertSame('onCronEvent', $callback[1]);
         self::assertIsCallable($callback);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('createUploadOptIn')]
+    public function testCreateUploadHooksRequireExplicitOptIn(bool $enabled): void
+    {
+        $boot = null;
+        $this->makeApp(new AppSchedulerRecorder(), static function ($wp) use ($enabled, &$boot): void {
+            $wp->shouldReceive('addAction')->andReturnUsing(static function ($hook, $callback, $priority = 10) use (&$boot): bool {
+                if ($hook === 'init' && $priority === 20) { $boot = $callback; }
+                return true;
+            });
+            $wp->shouldReceive('applyFilters')->once()->with('ApiSponsorManager/enableCreateUploads', false)->andReturn($enabled);
+            foreach (['rest_pre_dispatch' => [20, 3], 'rest_request_before_callbacks' => [10, 3],
+                'rest_dispatch_request' => [10, 4], 'rest_request_after_callbacks' => [PHP_INT_MAX, 3]] as $hook => [$priority, $args]) {
+                $wp->shouldReceive('addFilter')->times($enabled ? 1 : 0)
+                    ->with($hook, Mockery::type('callable'), $priority, $args)->andReturn(true);
+            }
+        });
+        self::assertIsCallable($boot);
+        $boot();
+    }
+
+    public static function createUploadOptIn(): array
+    {
+        return [[false], [true]];
     }
 }
 

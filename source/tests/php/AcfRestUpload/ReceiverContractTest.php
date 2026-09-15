@@ -54,9 +54,16 @@ class ReceiverContractTest extends PluginTestCase
         self::assertNull($this->receiver->preDispatch(null, null, $json));
     }
 
-    public function testUnsupportedVersionIsAControlledClientError(): void
+    public function testVersionTwoPassesThroughToTheNativeReceiver(): void
     {
         $request = $this->request([], version: '2');
+
+        self::assertNull($this->receiver->preDispatch(null, null, $request));
+    }
+
+    public function testUnknownVersionIsAControlledClientError(): void
+    {
+        $request = $this->request([], version: '3');
 
         $this->assertProtocolError($this->receiver->preDispatch(null, null, $request), 'acf_rest_upload_unsupported_version', 400);
     }

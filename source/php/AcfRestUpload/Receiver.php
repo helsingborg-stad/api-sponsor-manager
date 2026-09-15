@@ -228,8 +228,8 @@ class Receiver implements Hookable
     {
         $version = $request->get_header(self::VERSION_HEADER);
 
-        if ($version === null || $version === '') {
-            // Not a multipart upload request; JSON payloads pass through.
+        if ($version === null || $version === '' || $version === '2') {
+            // Native JSON and the separate create-only version 2 path never enter the legacy store.
             return $response;
         }
 
