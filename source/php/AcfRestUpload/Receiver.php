@@ -178,6 +178,7 @@ class Receiver implements Hookable
      *     references: list<FileReference>,
      *     files: array<string, array{name:string, type:string, tmp_name:string, error:int, size:int}>,
      *     attachments: list<int>,
+     *     movedFiles: list<string>,
      *     needsSanitization: bool,
      *     finalized: bool,
      *     key: string,
@@ -342,6 +343,7 @@ class Receiver implements Hookable
             'references' => $references,
             'files' => $files,
             'attachments' => [],
+            'movedFiles' => [],
             'needsSanitization' => false,
             'finalized' => false,
             'key' => $key,
@@ -515,20 +517,20 @@ class Receiver implements Hookable
                 return $this->error('acf_rest_upload_invalid_file', 400, 'An uploaded file part is invalid.');
             }
 
-            $attachmentId = media_handle_sideload([
+            $attachmentId = $this->sideloadWithTracking($contextId, [
                 'name' => (string) ($file['name'] ?? ''),
                 'type' => (string) ($file['type'] ?? ''),
                 'tmp_name' => $tmpName,
                 'error' => $error,
                 'size' => $size,
-            ], 0);
+            ]);
 
             if (is_wp_error($attachmentId)) {
                 return $this->classifyUploadError($attachmentId);
             }
 
             $this->contexts[$contextId]['attachments'][] = (int) $attachmentId;
-            if (!$this->recordProgress($contextId, 'active')) {
+            if (!$this->recordProgress($contextId, 'active') || $this->contexts[$contextId]['progressFailed']) {
                 return $this->error('acf_rest_upload_recovery_pending', 500, 'Could not persist upload recovery information.');
             }
 
@@ -562,6 +564,24 @@ class Receiver implements Hookable
         }
 
         return null;
+    }
+
+    /** Track only this input file's new destination, before core moves it. */
+    private function sideloadWithTracking(int $contextId, array $file): int|WP_Error
+    {
+        $track = function ($move, array $upload, string $destination) use ($contextId, $file) {
+            if ($move === null && ($upload['tmp_name'] ?? null) === $file['tmp_name'] && !file_exists($destination)) {
+                $this->contexts[$contextId]['movedFiles'][] = $destination;
+                $this->recordProgress($contextId, 'active');
+            }
+            return $move;
+        };
+        add_filter('pre_move_uploaded_file', $track, PHP_INT_MAX, 3);
+        try {
+            return media_handle_sideload($file, 0);
+        } finally {
+            remove_filter('pre_move_uploaded_file', $track, PHP_INT_MAX);
+        }
     }
 
     /**
@@ -753,7 +773,7 @@ class Receiver implements Hookable
     {
         $context = $this->contexts[$contextId];
         $recorded = $this->idempotencyStore()->tryRecordProgress(
-            $context['idempotencyOption'], (string) $context['owner'], $phase, $context['attachments']
+            $context['idempotencyOption'], (string) $context['owner'], $phase, $context['attachments'], $context['movedFiles']
         );
         if (!$recorded) {
             $this->contexts[$contextId]['progressFailed'] = true;
@@ -1084,6 +1104,13 @@ class Receiver implements Hookable
         foreach ($context['attachments'] as $attachmentId) {
             if (wp_delete_attachment($attachmentId, true) === false) {
                 $recoveryFailed = true;
+            }
+        }
+
+        foreach (array_unique($context['movedFiles']) as $file) {
+            if (is_file($file)) {
+                wp_delete_file($file);
+                if (is_file($file)) { $recoveryFailed = true; }
             }
         }
 

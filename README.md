@@ -175,6 +175,10 @@ X-ACF-Rest-Upload-Version: 1
   blocks duplicate work. Snapshots are request-local: process interruption
   requires explicit recovery, not automatic replay of partial work. Custom
   field hooks that modify other objects require their own compensation.
+- Native sideload destinations are recorded against the exact input temporary
+  file before the move. If attachment insertion fails, recovery removes that
+  file too. Failed file deletion retains its path in the claim for recovery;
+  nested sideloads with a different input file are not owned by the outer request.
 
 ### Notifications
 

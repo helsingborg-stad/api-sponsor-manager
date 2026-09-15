@@ -64,6 +64,7 @@ final class IdempotencyStore
             'phase' => 'active',
             'scope' => $scope,
             'attachments' => [],
+            'moved_files' => [],
             'owner' => $owner,
             'expires_at' => time() + $ttl,
             'saved_post_id' => null,
@@ -319,7 +320,7 @@ final class IdempotencyStore
     }
 
     /** Persist recovery evidence without replacing another request's claim. */
-    public function tryRecordProgress(string $option, string $owner, string $phase, array $attachments): bool
+    public function tryRecordProgress(string $option, string $owner, string $phase, array $attachments, array $movedFiles = []): bool
     {
         $state = $this->read($option);
         if (!$this->isOwnedActiveState($state, $owner)) {
@@ -328,6 +329,7 @@ final class IdempotencyStore
         $replacement = $state;
         $replacement['phase'] = $phase;
         $replacement['attachments'] = $attachments;
+        $replacement['moved_files'] = $movedFiles;
         return $replacement === $state || $this->casReplace($option, $state, $replacement);
     }
 

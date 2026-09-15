@@ -27,6 +27,7 @@ class ReceiverTest extends NativeTestCase
     private array $mail = [];
     private array $completions = [];
     private array $tempFiles = [];
+    private array $createdAttachments = [];
 
     public function set_up(): void
     {
@@ -37,6 +38,7 @@ class ReceiverTest extends NativeTestCase
             }
         }, 10, 2);
         wp_set_current_user(self::factory()->user->create(['role' => 'administrator']));
+        add_action('add_attachment', function (int $id): void { $this->createdAttachments[] = $id; });
         // Replace only service instances so interrupted test contexts cannot leak.
         // The plugin's registered post types, ACF groups, and native routes remain.
         global $wp_filter, $wp_rest_server;
@@ -85,6 +87,9 @@ class ReceiverTest extends NativeTestCase
 
     public function tear_down(): void
     {
+        foreach ($this->createdAttachments as $id) {
+            if (get_post_type($id) === 'attachment') { wp_delete_attachment($id, true); }
+        }
         acf_remove_local_field_group('group_upload_shapes');
         foreach ($this->tempFiles as $file) {
             if (is_file($file)) { unlink($file); }
@@ -306,6 +311,79 @@ class ReceiverTest extends NativeTestCase
         self::assertNotNull($created, 'The validator must reject a real newly created attachment.');
         self::assertNull(get_post($created));
         self::assertSame($before, $this->ids('offering'));
+        self::assertSame([], $this->mail);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('fileDeletionOutcomes')]
+    public function testAttachmentInsertFailureCleansTheMovedFileOrRetainsRecovery(bool $canDelete): void
+    {
+        $request = $this->request();
+        $moved = null;
+        add_filter('wp_handle_upload', static function (array $upload, string $context) use (&$moved): array {
+            if ($context === 'sideload') { $moved = $upload['file']; }
+            return $upload;
+        }, 10, 2);
+        add_filter('wp_insert_post_empty_content', static function ($empty, array $post) use (&$moved) {
+            if (($post['post_type'] ?? '') === 'attachment') {
+                self::assertNotNull($moved);
+                self::assertFileExists($moved, 'The native upload moved before attachment insertion failed.');
+                return true;
+            }
+            return $empty;
+        }, 10, 2);
+        if (!$canDelete) {
+            add_filter('wp_delete_file', static function ($file) use (&$moved) { return $file === $moved ? '' : $file; });
+        }
+        try {
+            self::assertGreaterThanOrEqual(400, $this->dispatch($request)->get_status());
+            self::assertNotNull($moved);
+            if ($canDelete) {
+                self::assertFileDoesNotExist($moved);
+                self::assertFalse(get_option($this->option($request)));
+            } else {
+                self::assertFileExists($moved);
+                $state = get_option($this->option($request));
+                self::assertIsArray($state);
+                self::assertSame('recovery_failed', $state['phase']);
+                self::assertSame([$moved], $state['moved_files']);
+                self::assertSame(425, $this->dispatch($this->request(key: $request->get_header('Idempotency-Key')))->get_status());
+            }
+            self::assertSame([], $this->ids('attachment'));
+            self::assertSame([], $this->ids('offering'));
+            self::assertSame([], $this->mail);
+        } finally {
+            if (is_string($moved) && is_file($moved)) { unlink($moved); }
+        }
+    }
+
+    public static function fileDeletionOutcomes(): array
+    {
+        return [[true], [false]];
+    }
+
+    public function testFailedOuterSideloadDoesNotDeleteANestedSideload(): void
+    {
+        $nestedFile = $this->request()->get_file_params()['_acf_rest_files']['hero'];
+        $outer = $this->request();
+        $outerPath = $nestedId = null;
+        $entered = false;
+        add_filter('wp_handle_upload', static function (array $upload) use (&$entered, &$outerPath, &$nestedId, $nestedFile): array {
+            if (!$entered) {
+                $entered = true;
+                $outerPath = $upload['file'];
+                $nestedId = media_handle_sideload($nestedFile, 0);
+                self::assertIsInt($nestedId);
+            }
+            return $upload;
+        });
+        add_filter('wp_insert_post_empty_content', static function ($empty, array $post) use (&$outerPath) {
+            return ($post['file'] ?? null) === $outerPath ? true : $empty;
+        }, 10, 2);
+        self::assertGreaterThanOrEqual(400, $this->dispatch($outer)->get_status());
+        self::assertNotNull($outerPath);
+        self::assertFileDoesNotExist($outerPath);
+        self::assertSame('attachment', get_post_type($nestedId));
+        self::assertFileExists(get_attached_file($nestedId));
         self::assertSame([], $this->mail);
     }
 
