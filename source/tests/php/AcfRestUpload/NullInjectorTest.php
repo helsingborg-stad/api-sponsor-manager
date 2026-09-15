@@ -76,21 +76,21 @@ class NullInjectorTest extends TestCase
 
     public function testAppendsNullAtNextNumericPosition(): void
     {
-        $result = (new NullInjector())->inject(['gallery' => [456]], ['acf[gallery][]']);
+        $result = (new NullInjector())->inject(['gallery' => [456]], ['gallery[]']);
 
         self::assertSame(['gallery' => [456, null]], $result);
     }
 
     public function testAppendsNullIntoEmptyNode(): void
     {
-        $result = (new NullInjector())->inject([], ['acf[gallery][]']);
+        $result = (new NullInjector())->inject([], ['gallery[]']);
 
         self::assertSame(['gallery' => [0 => null]], $result);
     }
 
-    public function testInjectsExplicitRootedNullPaths(): void
+    public function testInjectsNullRelativeToTheSuppliedArray(): void
     {
-        $result = (new NullInjector())->inject(['image' => '$file:hero'], ['acf[image]']);
+        $result = (new NullInjector())->inject(['image' => '$file:hero'], ['image']);
 
         self::assertNull($result['image']);
     }
@@ -99,7 +99,7 @@ class NullInjectorTest extends TestCase
     {
         $result = (new NullInjector())->injectEmptyArrays(
             ['gallery' => [1, 2], 'other' => 'keep'],
-            ['acf[gallery]', 'acf[fresh][]']
+            ['gallery', 'fresh[]']
         );
 
         self::assertSame([], $result['gallery']);
@@ -109,18 +109,18 @@ class NullInjectorTest extends TestCase
 
     public function testAppendAddressedEmptyListDefinesTheListAsEmpty(): void
     {
-        // acf[fresh][] with an empty list value must set fresh to [] exactly,
+        // fresh[] with an empty list value must set fresh to [] exactly,
         // never append one empty item (which would nest "[[]]").
-        $result = (new NullInjector())->injectEmptyArrays([], ['acf[fresh][]']);
+        $result = (new NullInjector())->injectEmptyArrays([], ['fresh[]']);
         self::assertSame(['fresh' => []], $result);
 
-        $cleared = (new NullInjector())->injectEmptyArrays(['fresh' => [1, 2]], ['acf[fresh][]']);
+        $cleared = (new NullInjector())->injectEmptyArrays(['fresh' => [1, 2]], ['fresh[]']);
         self::assertSame(['fresh' => []], $cleared);
     }
 
     public function testAppendAddressedNullStillAppendsAtNextPosition(): void
     {
-        $result = (new NullInjector())->inject(['fresh' => [456]], ['acf[fresh][]']);
+        $result = (new NullInjector())->inject(['fresh' => [456]], ['fresh[]']);
 
         self::assertSame(['fresh' => [456, null]], $result);
     }
@@ -129,8 +129,9 @@ class NullInjectorTest extends TestCase
     {
         $values = ['gallery' => [1]];
 
-        (new NullInjector())->injectEmptyArrays($values, ['acf[gallery]']);
+        $result = (new NullInjector())->injectEmptyArrays($values, ['gallery']);
 
+        self::assertSame(['gallery' => []], $result);
         self::assertSame([1], $values['gallery']);
     }
 }
