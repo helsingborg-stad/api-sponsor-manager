@@ -14,6 +14,13 @@ final class SponsorUploads implements Hookable
     public function addHooks(): void
     {
         $this->wpService->addFilter('AcfRestUpload/destinations', [$this, 'destinations']);
+        $this->wpService->addFilter('AcfRestUpload/imagePolicy', [$this, 'imagePolicy'], 10, 3);
+    }
+
+    public function imagePolicy(array $limits, array $field, \WP_REST_Request $request): array
+    {
+        // Sponsor images use the resolved native field limits without additional restrictions.
+        return $limits;
     }
 
     public function destinations(array $destinations): array

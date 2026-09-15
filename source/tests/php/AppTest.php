@@ -29,6 +29,8 @@ class AppTest extends PluginTestCase
         $wp->shouldReceive('addAction')->andReturn(true)->byDefault();
         $wp->shouldReceive('addFilter')->once()
             ->with('AcfRestUpload/destinations', Mockery::type('callable'))->andReturn(true);
+        $wp->shouldReceive('addFilter')->once()
+            ->with('AcfRestUpload/imagePolicy', Mockery::type('callable'), 10, 3)->andReturn(true);
         if ($configure !== null) { $configure($wp); }
 
         return new App(
@@ -76,27 +78,36 @@ class AppTest extends PluginTestCase
         self::assertIsCallable($callback);
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('createUploadOptIn')]
-    public function testCreateUploadHooksRequireExplicitOptIn(bool $enabled): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('providerSelections')]
+    public function testCreateUploadHooksBootOnlyTheSelectedProvider(bool $embedded): void
     {
         $boot = null;
-        $this->makeApp(new AppSchedulerRecorder(), static function ($wp) use ($enabled, &$boot): void {
+        $calls = 0;
+        $this->makeApp(new AppSchedulerRecorder(), static function ($wp) use ($embedded, &$boot, &$calls): void {
             $wp->shouldReceive('addAction')->andReturnUsing(static function ($hook, $callback, $priority = 10) use (&$boot): bool {
                 if ($hook === 'init' && $priority === 20) { $boot = $callback; }
                 return true;
             });
-            $wp->shouldReceive('applyFilters')->once()->with('ApiSponsorManager/enableCreateUploads', false)->andReturn($enabled);
+            $descriptor = $embedded ? null : ['api_version' => 1, 'protocol_versions' => [2],
+                'boot' => static function ($actualWp, $acf) use ($wp, &$calls): void {
+                    self::assertSame($wp, $actualWp);
+                    self::assertInstanceOf(AcfService::class, $acf);
+                    $calls++;
+                }];
+            $wp->shouldReceive('applyFilters')->once()->with('AcfRestUpload/provider', null)->andReturn($descriptor);
             foreach (['rest_pre_dispatch' => [20, 3], 'rest_request_before_callbacks' => [10, 3],
                 'rest_dispatch_request' => [10, 4], 'rest_request_after_callbacks' => [PHP_INT_MAX, 3]] as $hook => [$priority, $args]) {
-                $wp->shouldReceive('addFilter')->times($enabled ? 1 : 0)
+                $wp->shouldReceive('addFilter')->times($embedded ? 1 : 0)
                     ->with($hook, Mockery::type('callable'), $priority, $args)->andReturn(true);
             }
         });
         self::assertIsCallable($boot);
         $boot();
+        $boot();
+        self::assertSame($embedded ? 0 : 1, $calls);
     }
 
-    public static function createUploadOptIn(): array
+    public static function providerSelections(): array
     {
         return [[false], [true]];
     }

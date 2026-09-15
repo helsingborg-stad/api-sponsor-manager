@@ -7,7 +7,6 @@ use AcfService\Contracts\GetFields;
 use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
 use ApiSponsorManager\Helper\NotificationServices\NotificationService;
 use ApiSponsorManager\AcfRestUpload\IdempotencyStore;
-use ApiSponsorManager\AcfRestUpload\Receiver;
 use WP_Post;
 use WP_REST_Request;
 use WP_Error;
@@ -211,8 +210,8 @@ class Notifications implements Hookable {
         add_filter('rest_request_after_callbacks', [$this, 'afterRestCallbacks'], PHP_INT_MAX - 1, 3);
         add_filter('rest_post_dispatch', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
         $this->wpService->addAction('AcfRestUpload/created', [$this, 'completedCreate'], 1, 3);
-        $this->wpService->addAction(Receiver::ACTION_BEGIN_OPERATION, [$this, 'beginOperation'], 1, 3);
-        $this->wpService->addAction(Receiver::ACTION_END_OPERATION, [$this, 'endOperation'], 1, 2);
-        $this->wpService->addAction(Receiver::ACTION_AFTER_INSERT, [$this, 'completeOperation'], 1, 2);
+        $this->wpService->addAction('AcfRestUpload/beginOperation', [$this, 'beginOperation'], 1, 3);
+        $this->wpService->addAction('AcfRestUpload/endOperation', [$this, 'endOperation'], 1, 2);
+        $this->wpService->addAction('AcfRestUpload/afterInsertPost', [$this, 'completeOperation'], 1, 2);
     }
 }

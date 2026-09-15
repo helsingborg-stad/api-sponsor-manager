@@ -7,10 +7,6 @@ namespace ApiSponsorManager\Test\AcfRestUpload;
 use ApiSponsorManager\Test\NativeTestCase;
 use ApiSponsorManager\Test\PhpMultipartParser;
 use PHPUnit\Framework\Attributes\DataProvider;
-use AcfService\Implementations\NativeAcfService;
-use ApiSponsorManager\AcfRestUpload\CreateReceiver;
-use ApiSponsorManager\SponsorUploads;
-use WpService\Implementations\NativeWpService;
 use WP_REST_Request;
 use WP_REST_Response;
 
@@ -19,7 +15,6 @@ use WP_REST_Response;
  */
 class CreateReceiverTest extends NativeTestCase
 {
-    private CreateReceiver $receiver;
     private array $files = [];
     private array $attachments = [];
     private array $fieldKeys = [];
@@ -28,10 +23,7 @@ class CreateReceiverTest extends NativeTestCase
     public function set_up(): void
     {
         parent::set_up();
-        $wp = new NativeWpService();
-        (new SponsorUploads($wp))->addHooks();
-        $this->receiver = new CreateReceiver($wp, new NativeAcfService());
-        $this->receiver->addHooks();
+        // The real plugin bootstrap now selects and boots the embedded provider by default.
         wp_set_current_user(self::factory()->user->create(['role' => 'administrator']));
         add_action('add_attachment', function (int $id): void { $this->attachments[] = $id; });
         add_action('doing_it_wrong_run', function (string $function, string $message): void {
@@ -316,7 +308,7 @@ class CreateReceiverTest extends NativeTestCase
         add_action('AcfRestUpload/created', static function () use (&$completed): void { $completed++; });
         $request = $this->request();
         $response = $this->dispatch($request);
-        $this->receiver->afterCallbacks($response, null, $request);
+        apply_filters('rest_request_after_callbacks', $response, null, $request);
         self::assertSame(1, $completed);
     }
 

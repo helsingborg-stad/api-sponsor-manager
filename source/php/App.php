@@ -27,18 +27,11 @@ class App
             new Resource\Taxonomy($wpService),
             new OptionsPage($wpService, $acfService),
             new Notifications($wpService, $acfService, $notificationService),
-            new AcfRestUpload\FieldSettings(),
-            new AcfRestUpload\Receiver(),
             new SponsorUploads($wpService),
             $cronScheduler
         ]);
 
-        // Temporary opt-in while native finalization and provider selection remain separate slices.
-        $wpService->addAction('init', function () use ($wpService, $acfService): void {
-            if ($wpService->applyFilters('ApiSponsorManager/enableCreateUploads', false)) {
-                (new AcfRestUpload\CreateReceiver($wpService, $acfService))->addHooks();
-            }
-        }, 20);
+        (new UploadProvider($wpService, $acfService))->addHooks();
 
         $cronScheduler->addEvent(
             new CronEvent(
