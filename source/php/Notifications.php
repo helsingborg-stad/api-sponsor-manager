@@ -20,6 +20,7 @@ class Notifications implements Hookable {
     private array $requests = [];
     private array $operationRequests = [];
     private array $operations = [];
+    private array $createQueues = [];
     private const CONSUMER = 'sponsor_notifications';
 
     public function __construct(
@@ -72,7 +73,7 @@ class Notifications implements Hookable {
         if ($newStatus === 'draft' && $oldStatus === 'new') {
             foreach ($this->getEmailTemplates() as $template) {
                 if ($template['trigger'] === 'submit' && $post->post_type === $template['post_type']) {
-                    if (!$this->queueForOperation($template, $post)) {
+                    if (!$this->queueForCreate($template, $post) && !$this->queueForOperation($template, $post)) {
                         $this->mailQueue[$post->ID][] = [$template, $post];
                     }
                 }
@@ -105,6 +106,10 @@ class Notifications implements Hookable {
     public function beforeRestCallbacks($response, $handler, WP_REST_Request $request): mixed
     {
         $this->requests[spl_object_id($request)] = $request;
+        if ($request->get_header('X-ACF-Rest-Upload-Version') === '2') {
+            // Register after provider boot so this runs after its finalizer, including internal dispatch.
+            add_filter('rest_request_after_callbacks', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
+        }
         return $response;
     }
 
@@ -118,6 +123,22 @@ class Notifications implements Hookable {
             return new WP_Error('acf_rest_upload_notification_state_failed', 'Could not persist notification state.', ['status' => 500]);
         }
         return $response;
+    }
+
+    public function afterRestPostDispatch($response, $handler, WP_REST_Request $request): mixed
+    {
+        unset($this->createQueues[spl_object_id($request)]);
+        return $response;
+    }
+
+    public function completedCreate(int $postId, ?int $attachmentId, WP_REST_Request $request): void
+    {
+        $id = spl_object_id($request);
+        $queue = $this->createQueues[$id][$postId] ?? [];
+        unset($this->createQueues[$id][$postId]);
+        foreach ($queue as $params) {
+            $this->composeAndSendEmail(...$params);
+        }
     }
 
     public function beginOperation(string $operation, string $owner, WP_REST_Request $request): void
@@ -152,6 +173,17 @@ class Notifications implements Hookable {
         return true;
     }
 
+    private function queueForCreate(array $template, WP_Post $post): bool
+    {
+        $id = array_key_last($this->requests);
+        $request = $id === null ? null : $this->requests[$id];
+        if (!$request instanceof WP_REST_Request || $request->get_header('X-ACF-Rest-Upload-Version') !== '2') {
+            return false;
+        }
+        $this->createQueues[$id][$post->ID][] = [$template, $post];
+        return true;
+    }
+
     public function completeOperation(?int $postId, string $operation): void
     {
         $store = new IdempotencyStore();
@@ -177,7 +209,8 @@ class Notifications implements Hookable {
 
         add_filter('rest_request_before_callbacks', [$this, 'beforeRestCallbacks'], 1, 3);
         add_filter('rest_request_after_callbacks', [$this, 'afterRestCallbacks'], PHP_INT_MAX - 1, 3);
-        add_filter('rest_post_dispatch', [$this, 'afterRestCallbacks'], PHP_INT_MAX - 1, 3);
+        add_filter('rest_post_dispatch', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
+        $this->wpService->addAction('AcfRestUpload/created', [$this, 'completedCreate'], 1, 3);
         $this->wpService->addAction(Receiver::ACTION_BEGIN_OPERATION, [$this, 'beginOperation'], 1, 3);
         $this->wpService->addAction(Receiver::ACTION_END_OPERATION, [$this, 'endOperation'], 1, 2);
         $this->wpService->addAction(Receiver::ACTION_AFTER_INSERT, [$this, 'completeOperation'], 1, 2);
