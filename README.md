@@ -231,6 +231,11 @@ Run tests only in isolated, non-deployed environments. The lockfile includes
 Brain Monkey, Mockery, WordPress 7.1, its matching test library, PHPUnit
 polyfills, and the plugin's ACF import helper.
 
+The pre-merge workflow (`.github/workflows/pre-merge-test.yaml`) uses PHP 8.3,
+installs dependencies from the committed `composer.lock`, and runs
+`composer test` (the standalone unit suite). The committed dependencies require
+PHP 8.2 or newer, so PHP 7.4 cannot install them from the lockfile.
+
 ### Standalone tests
 
 The unit suite (`source/tests/php`, `phpunit.xml`) does not load WordPress.
