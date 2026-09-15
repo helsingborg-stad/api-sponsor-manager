@@ -127,6 +127,79 @@ class CreateReceiverTest extends NativeTestCase
         self::assertSame([['recipient+' . $id . '@example.test']], array_column($this->mail, 'to'));
     }
 
+    public function testOrdinaryJsonKeepsItsLocalCompletionNotificationBehavior(): void
+    {
+        $image = self::factory()->attachment->create_upload_object(DIR_TESTDATA . '/images/canola.jpg');
+        $request = $this->request();
+        $params = $request->get_body_params();
+        $params['acf']['image'] = $image;
+        $request->remove_header('X-ACF-Rest-Upload-Version');
+        $request->set_header('Content-Type', 'application/json');
+        $request->set_body_params([]);
+        $request->set_file_params([]);
+        $request->set_body(wp_json_encode($params));
+        $response = $this->dispatch($request);
+        self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
+        $id = $response->get_data()['id'];
+        self::assertSame($image, (int) get_field('image', $id, false));
+        self::assertSame([], $this->mail, 'Ordinary JSON does not use version-2 completion.');
+        do_action('ModularityFrontendForm/afterInsertPost', $id);
+        do_action('ModularityFrontendForm/afterInsertPost', $id);
+        self::assertSame([['recipient+' . $id . '@example.test']], array_column($this->mail, 'to'));
+    }
+
+    public function testLocalDatabaseCompletionHookNotifiesAfterMetadataSaving(): void
+    {
+        update_field('field_69bbaf272549d', [
+            ['trigger' => 'submit', 'post_type' => 'offering', 'recipients' => 'local@example.test',
+                'subject' => '{description}', 'message' => 'Saved {ID}'],
+        ], 'options');
+        $id = wp_insert_post(['post_type' => 'offering', 'post_status' => 'draft', 'post_title' => 'Local create']);
+        self::assertGreaterThan(0, $id);
+        self::assertSame([], $this->mail);
+        update_field('description', 'Metadata saved before local completion', $id);
+        do_action('ModularityFrontendForm/afterInsertPost', $id);
+        do_action('ModularityFrontendForm/afterInsertPost', $id);
+        self::assertCount(1, $this->mail);
+        self::assertSame(['local@example.test'], $this->mail[0]['to']);
+        self::assertSame('Metadata saved before local completion', $this->mail[0]['subject']);
+    }
+
+    public function testLateHttpErrorRemovesTheCreateAndDoesNotNotify(): void
+    {
+        $before = $this->ids();
+        $request = $this->request();
+        $file = null;
+        add_action('rest_insert_offering', function () use (&$file): void {
+            $file = get_attached_file($this->attachments[array_key_last($this->attachments)]);
+        }, 20);
+        add_filter('rest_request_after_callbacks', static function ($response, $handler, $actual) use ($request) {
+            return $actual === $request ? new WP_REST_Response(['code' => 'late_failure'], 500) : $response;
+        }, 20, 3);
+        $response = $this->dispatch($request);
+        self::assertSame(500, $response->get_status());
+        self::assertSame('late_failure', $response->get_data()['code']);
+        self::assertSame([], $this->mail);
+        self::assertSame($before, $this->ids());
+        self::assertIsString($file);
+        self::assertFileDoesNotExist($file);
+    }
+
+    public function testFailedInternalDispatchReleasesItsNotificationQueue(): void
+    {
+        $request = $this->request();
+        $postId = null;
+        add_action('rest_insert_offering', static function ($post) use (&$postId): void { $postId = $post->ID; });
+        add_filter('rest_request_after_callbacks', static function ($response, $handler, $actual) use ($request) {
+            return $actual === $request ? new \WP_Error('late_failure', 'Save failed.', ['status' => 500]) : $response;
+        }, 20, 3);
+        self::assertSame(500, $this->dispatch($request)->get_status());
+        self::assertIsInt($postId);
+        // Internal dispatch does not run rest_post_dispatch. No stale queue may survive it.
+        do_action('AcfRestUpload/created', $postId, null, $request);
+        self::assertSame([], $this->mail);
+    }
+
     public function testInvalidFinalAttachmentParentRemovesOnlyTheFailedCreateAndDoesNotNotify(): void
     {
         $unrelated = self::factory()->post->create();
@@ -174,10 +247,67 @@ class CreateReceiverTest extends NativeTestCase
     public function testSeparateCompletedSubmissionsNotifyIndependently(): void
     {
         foreach (['sponsor-offerings', 'sponsor-assignments'] as $route) {
-            self::assertSame(201, $this->dispatch($this->request($route))->get_status());
+            for ($i = 0; $i < 2; $i++) {
+                self::assertSame(201, $this->dispatch($this->request($route))->get_status());
+            }
         }
-        self::assertCount(2, $this->mail);
-        self::assertNotSame($this->mail[0]['to'], $this->mail[1]['to']);
+        self::assertCount(4, $this->mail);
+        self::assertCount(4, array_unique(array_column($this->mail, 'subject')));
+    }
+
+    public function testNativeFailureAfterInsertionPreservesAnExistingImage(): void
+    {
+        $image = self::factory()->attachment->create_upload_object(DIR_TESTDATA . '/images/canola.jpg');
+        $parent = self::factory()->post->create();
+        wp_update_post(['ID' => $image, 'post_parent' => $parent]);
+        $file = get_attached_file($image);
+        $before = $this->ids();
+        register_rest_field('offering', 'fail_after_insert', [
+            'schema' => ['type' => 'boolean'],
+            'update_callback' => static fn () => new \WP_Error('late_native_failure', 'Save failed.', ['status' => 500]),
+        ]);
+        try {
+            $request = $this->request();
+            $acf = $request->get_param('acf');
+            $acf['image'] = $image;
+            $request->set_param('acf', $acf);
+            $request->set_param('fail_after_insert', true);
+            $request->set_file_params([]);
+            $response = $this->dispatch($request);
+            self::assertSame(500, $response->get_status());
+            self::assertSame('late_native_failure', $response->get_data()['code']);
+            self::assertSame($before, $this->ids());
+            self::assertSame($parent, (int) get_post($image)->post_parent);
+            self::assertFileIsReadable($file);
+            self::assertSame([], $this->mail);
+        } finally {
+            unset($GLOBALS['wp_rest_additional_fields']['offering']['fail_after_insert']);
+        }
+    }
+
+    public function testMissingFinalFileDoesNotNotifyAndReportsFailedPostCleanup(): void
+    {
+        $postId = null;
+        add_action('rest_insert_offering', function ($post): void {
+            $attachment = $this->attachments[array_key_last($this->attachments)];
+            unlink(get_attached_file($attachment));
+        }, 20);
+        $denyDelete = static function ($delete, $post) use (&$postId) {
+            if ($post->post_type !== 'offering') { return $delete; }
+            $postId = $post->ID;
+            return false;
+        };
+        add_filter('pre_delete_post', $denyDelete, 10, 2);
+        try {
+            $response = $this->dispatch($this->request());
+            self::assertSame(500, $response->get_status());
+            self::assertSame('acf_rest_upload_cleanup_failed', $response->get_data()['code']);
+            self::assertSame('offering', get_post_type($postId));
+            self::assertNull(get_post($this->attachments[0]));
+            self::assertSame([], $this->mail);
+        } finally {
+            remove_filter('pre_delete_post', $denyDelete, 10);
+        }
     }
 
     public function testRepeatedFinalizationDoesNotEmitAnotherCompletionAction(): void
@@ -190,15 +320,17 @@ class CreateReceiverTest extends NativeTestCase
         self::assertSame(1, $completed);
     }
 
-    public function testFailedOuterCreateDoesNotRemoveNestedRequestResources(): void
+    #[DataProvider('nestedRoutes')]
+    public function testFailedOuterCreateDoesNotRemoveNestedRequestResources(string $nestedRoute): void
     {
         $outer = $this->request();
         $nested = null;
         $outerAttachment = null;
-        add_action('rest_insert_offering', function () use (&$nested, &$outerAttachment): void {
+        add_action('rest_insert_offering', function ($post, $actual) use ($outer, $nestedRoute, &$nested, &$outerAttachment): void {
+            if ($actual !== $outer) { return; }
             $outerAttachment = $this->attachments[array_key_last($this->attachments)];
-            $nested = $this->dispatch($this->request('sponsor-assignments'));
-        }, 20);
+            $nested = $this->dispatch($this->request($nestedRoute));
+        }, 20, 2);
         add_filter('rest_request_after_callbacks', function ($response, $handler, $actual) use ($outer, &$outerAttachment): mixed {
             if ($actual === $outer) { wp_update_post(['ID' => $outerAttachment, 'post_parent' => 0]); }
             return $response;
@@ -211,6 +343,11 @@ class CreateReceiverTest extends NativeTestCase
         self::assertSame($id, (int) get_post($image)->post_parent);
         self::assertFileIsReadable(get_attached_file($image));
         self::assertCount(1, $this->mail);
+    }
+
+    public static function nestedRoutes(): array
+    {
+        return [['sponsor-assignments'], ['sponsor-offerings']];
     }
 
     public function testNativePhpMultipartShapeCreates(): void
@@ -495,6 +632,7 @@ class CreateReceiverTest extends NativeTestCase
         self::assertCount(1, $moved);
         self::assertFileDoesNotExist($moved[0]);
         self::assertSame($before, $this->ids());
+        self::assertSame([], $this->mail);
     }
 
     public function testRegisteredNativeDestinationAllowsAnOmittedOptionalImageOrNull(): void

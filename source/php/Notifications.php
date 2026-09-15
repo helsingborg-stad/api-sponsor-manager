@@ -106,6 +106,10 @@ class Notifications implements Hookable {
     public function beforeRestCallbacks($response, $handler, WP_REST_Request $request): mixed
     {
         $this->requests[spl_object_id($request)] = $request;
+        if ($request->get_header('X-ACF-Rest-Upload-Version') === '2') {
+            // Register after provider boot so this runs after its finalizer, including internal dispatch.
+            add_filter('rest_request_after_callbacks', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
+        }
         return $response;
     }
 

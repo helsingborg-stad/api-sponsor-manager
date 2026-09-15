@@ -8,9 +8,10 @@ use AcfService\AcfService;
 use WP_Error;
 use WP_Post;
 use WP_REST_Request;
+use WP_REST_Response;
 use WpService\WpService;
 
-/** Native collection creates only. No operation store or completion notifications. */
+/** Native collection creates with request-owned cleanup and a completion action. */
 final class CreateReceiver
 {
     private array $contexts = [];
@@ -233,6 +234,10 @@ final class CreateReceiver
         }
         unset($this->contexts[$id]);
         $failure = $context['error'] ?? ($response instanceof WP_Error ? $response : null);
+        if ($failure === null && $response instanceof WP_REST_Response && $response->is_error()) {
+            return $this->cleanup($context) ? $response
+                : self::error('cleanup_failed', 500, 'Could not remove the failed create.');
+        }
         if ($failure === null) { $failure = $this->checkComplete($context); }
         if ($failure instanceof WP_Error) {
             return $this->cleanup($context) ? $failure
