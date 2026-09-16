@@ -24,12 +24,13 @@ final class CreateReceiver
         // ACF initializes its request-specific schema at priority 10.
         $this->wpService->addFilter('rest_pre_dispatch', [$this, 'prepare'], 20, 3);
         $this->wpService->addFilter('rest_request_after_callbacks', [$this, 'afterCallbacks'], PHP_INT_MAX, 3);
+        $this->wpService->addFilter('acf/connect_attachment_to_post', [$this, 'preserveExistingParent'], 10, 3);
     }
 
     public function prepare(mixed $response, mixed $server, WP_REST_Request $request): mixed
     {
         $version = $request->get_header('X-ACF-Rest-Upload-Version');
-        if ($response !== null || $version === '' || $version === null) { return $response; }
+        if ($response !== null || $version === null) { return $response; }
         if ($version !== '3') { return self::error('unsupported_version', 400, 'Only protocol version 3 is supported.'); }
         if ($request->get_method() !== 'POST' || ($request->get_content_type()['value'] ?? '') !== 'multipart/form-data') {
             return self::error('unsupported_request', 400, 'Use a multipart native collection create.');
@@ -47,17 +48,26 @@ final class CreateReceiver
             || (new \ReflectionMethod($callback[0], 'create_item'))->getDeclaringClass()->getName() !== WP_REST_Posts_Controller::class) {
             return self::error('unsupported_request', 400, 'The endpoint must retain native post creation.');
         }
+        $type = null;
+        foreach ($this->wpService->getPostTypes(['show_in_rest' => true], 'objects') as $postType) {
+            if ($postType->get_rest_controller() === $callback[0]
+                && strcasecmp($this->wpService->restGetRouteForPostTypeItems($postType->name), $request->get_route()) === 0) {
+                $type = $postType->name;
+                break;
+            }
+        }
+        if ($type === null) { return self::error('unsupported_request', 400, 'Use the registered native collection.'); }
         $payload = (new CreatePayload())->decode($request);
         if ($payload instanceof WP_Error) { return $payload; }
-        $request->set_query_params(array_intersect_key($request->get_query_params(), array_flip(['_fields', '_embed', '_locale', 'acf_format'])));
-        $request->set_body_params($payload['values']);
+        $controls = array_flip(['context', '_fields', '_embed', '_envelope', '_locale', '_pretty', 'acf_format']);
+        $request->set_query_params(array_intersect_key($request->get_query_params(), $controls));
+        $request->set_body_params(array_replace(array_intersect_key($request->get_body_params(), $controls), $payload['values']));
         $request->set_url_params([]);
         $request->set_default_params([]);
-        $type = $callback[0]->get_item_schema()['title'];
         $image = new CreateImage($this->wpService);
         $total = 0;
         foreach ($payload['references'] as $name => $key) {
-            $field = $this->resolveField($type, $name);
+            $field = $this->resolveField($type, (string) $name);
             if ($field === null || ($field['type'] ?? null) !== 'image' || ($handler['args']['acf']['properties'][$name] ?? null) === null) {
                 return self::error('invalid_reference', 400, 'The reference must identify an exposed native image field.');
             }
@@ -109,6 +119,17 @@ final class CreateReceiver
         // WordPress now performs all normal schema/ACF validation and sanitization with real IDs,
         // checks native permission again, and calls the original native create callback.
         return null;
+    }
+
+    public function preserveExistingParent(bool $connect, mixed $attachment, mixed $post): bool
+    {
+        foreach ($this->contexts as $context) {
+            if ($context['post'] === (int) $post) {
+                // Native ACF otherwise adopts unparented existing images during its save.
+                return $connect && in_array((int) $attachment, $context['attachments'], true);
+            }
+        }
+        return $connect;
     }
 
     private function resolveField(string $postType, string $name): ?array

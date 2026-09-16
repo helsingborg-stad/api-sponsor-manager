@@ -15,18 +15,21 @@ final class CreatePayload
         $json = $request->get_body_params()['_acf_rest_payload'] ?? null;
         if (!is_string($json)) { return CreateReceiver::error('invalid_payload', 400, 'Supply a JSON object payload.'); }
         if (strlen($json) > 1_048_576) { return CreateReceiver::error('too_large', 413, 'The payload exceeds 1 MiB.'); }
-        if (!is_object(json_decode($json))) {
+        $object = json_decode($json);
+        if (!is_object($object)) {
             return CreateReceiver::error('invalid_payload', 400, 'Supply a valid JSON object payload.');
         }
-        $values = json_decode($json, true);
+        $values = (array) $object;
+        // Only the native parameter bags are arrays; ordinary JSON objects keep their type.
+        if (is_object($values['acf'] ?? null)) { $values['acf'] = (array) $values['acf']; }
         $references = [];
-        $scan = static function (array $values, array $path = []) use (&$scan, &$references): bool {
+        $scan = static function (array|object $values, array $path = []) use (&$scan, &$references): bool {
             foreach ($values as $name => $value) {
                 $next = [...$path, $name];
-                if (is_array($value) && !$scan($value, $next)) { return false; }
+                if ((is_array($value) || is_object($value)) && !$scan($value, $next)) { return false; }
                 if (!is_string($value) || !str_starts_with($value, '$file:')) { continue; }
                 $key = substr($value, 6);
-                if (count($next) !== 2 || $next[0] !== 'acf' || !preg_match('/\A[A-Za-z0-9_-]+\z/D', $key)) {
+                if (count($next) !== 2 || $next[0] !== 'acf' || $key === '') {
                     return false;
                 }
                 $references[$name] = $key;
