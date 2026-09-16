@@ -27,11 +27,10 @@ class App
             new Resource\Taxonomy($wpService),
             new OptionsPage($wpService, $acfService),
             new Notifications($wpService, $acfService, $notificationService),
-            new SponsorUploads($wpService),
             $cronScheduler
         ]);
 
-        (new UploadProvider($wpService, $acfService))->addHooks();
+        (new AcfRestUpload\CreateReceiver($wpService, $acfService))->addHooks();
 
         $cronScheduler->addEvent(
             new CronEvent(

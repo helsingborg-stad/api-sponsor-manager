@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace ApiSponsorManager\AcfRestUpload;
 
 use WP_Error;
-use WP_REST_Request;
 use WpService\WpService;
 
 /** Validate actual image bytes before media storage. */
@@ -13,7 +12,7 @@ final class CreateImage
 {
     public function __construct(private WpService $wpService) {}
 
-    public function validate(array &$file, array $field, WP_REST_Request $request): ?WP_Error
+    public function validate(array &$file, array $field): ?WP_Error
     {
         if (in_array($file['error'], [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true)) {
             return CreateReceiver::error('too_large', 413, 'The uploaded image exceeds the size limit.');
@@ -36,26 +35,16 @@ final class CreateImage
             || $dimensions['mime'] !== $type['type']) {
             return CreateReceiver::error('invalid_file_type', 415, 'The binary part must contain an allowed image.');
         }
-        $limits = array_intersect_key($field, array_flip([
-            'min_size', 'max_size', 'min_width', 'max_width', 'min_height', 'max_height', 'mime_types',
-        ]));
-        $policy = $this->wpService->applyFilters('AcfRestUpload/imagePolicy', $limits, $field, $request);
-        if (!is_array($policy)) {
-            return CreateReceiver::error('invalid_policy', 500, 'The image policy must return field-limit settings.');
+        $extensions = array_filter(array_map('trim', explode(',', (string) ($field['mime_types'] ?? ''))));
+        if ($extensions && !in_array($type['ext'], $extensions, true)) {
+            return CreateReceiver::error('invalid_file_type', 415, 'The image type is not permitted by the field.');
         }
-        // Validate both policies: a filter can tighten but cannot remove native restrictions.
-        foreach ([$limits, $policy] as $settings) {
-            $extensions = array_filter(array_map('trim', explode(',', (string) ($settings['mime_types'] ?? ''))));
-            if ($extensions && !in_array($type['ext'], $extensions, true)) {
-                return CreateReceiver::error('invalid_file_type', 415, 'The image type is not permitted by the field.');
+        foreach (['size' => $file['size'] / 1_048_576, 'width' => $dimensions[0], 'height' => $dimensions[1]] as $name => $value) {
+            if (($field['max_' . $name] ?? false) && $value > (float) $field['max_' . $name]) {
+                return CreateReceiver::error('too_large', 413, 'The image exceeds the field limit.');
             }
-            foreach (['size' => $file['size'] / 1_048_576, 'width' => $dimensions[0], 'height' => $dimensions[1]] as $name => $value) {
-                if (($settings['max_' . $name] ?? false) && $value > (float) $settings['max_' . $name]) {
-                    return CreateReceiver::error('too_large', 413, 'The image exceeds the field limit.');
-                }
-                if (($settings['min_' . $name] ?? false) && $value < (float) $settings['min_' . $name]) {
-                    return CreateReceiver::error('invalid_file', 400, 'The image is below the field minimum.');
-                }
+            if (($field['min_' . $name] ?? false) && $value < (float) $field['min_' . $name]) {
+                return CreateReceiver::error('invalid_file', 400, 'The image is below the field minimum.');
             }
         }
         return null;
