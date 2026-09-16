@@ -275,6 +275,21 @@ Install production dependencies with `composer install --no-dev --prefer-dist`
 (also used by `build.php`). Do not deploy a development `vendor/` directory:
 Mago and the test tools are not runtime dependencies.
 
+Run `php build.php --cleanup` from the root of a disposable source copy only.
+Cleanup removes build inputs. Do not run it in a deployed plugin or a working
+checkout. The build uses the committed npm lockfile; browser-data and dependency
+updates require a separate reviewed change. The ACF export manager is required
+by the plugin bootstrap and must be present in the production autoloader.
+
+Before accepting an artifact, verify generated assets and production autoloading
+without a development vendor directory. Check that plugin and dependency tests,
+PHPUnit configuration, development tools, local verification helpers, and
+credentials are absent. Service contracts whose names end in `Test.php` are
+runtime code, not test suites. Keep build credentials outside the source copy.
+Record source and lockfile identities, artifact checksums, commands, and audit
+findings. A successful local build does not establish production consumer
+compatibility, effective web/proxy upload limits, or deployment approval.
+
 ## Roadmap
 
 See the [open issues][issues-url] for a list of proposed features (and known issues).

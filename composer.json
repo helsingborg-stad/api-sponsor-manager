@@ -26,7 +26,8 @@
     "require": {
         "helsingborg-stad/wputilservice": "^0.3",
         "helsingborg-stad/wpservice": "^2.0",
-        "helsingborg-stad/acfservice": "^1.0"
+        "helsingborg-stad/acfservice": "^1.0",
+        "helsingborg-stad/acf-export-manager": "^1.0"
     },
     "suggest": {
         "helsingborg-stad/municipio": "^6.0.0"
@@ -38,8 +39,7 @@
         "mockery/mockery": "^1.6",
         "wp-phpunit/wp-phpunit": "7.1.0",
         "johnpbloch/wordpress-core": "7.1.0",
-        "yoast/phpunit-polyfills": "^4.0",
-        "helsingborg-stad/acf-export-manager": "^1.0"
+        "yoast/phpunit-polyfills": "^4.0"
     },
     "config": {
         "allow-plugins": {
