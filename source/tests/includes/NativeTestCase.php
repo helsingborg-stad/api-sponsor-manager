@@ -8,6 +8,13 @@ namespace ApiSponsorManager\Test;
 #[\PHPUnit\Framework\Attributes\BackupGlobals(false)]
 abstract class NativeTestCase extends \WP_UnitTestCase
 {
+    public function set_up(): void
+    {
+        parent::set_up();
+        // WordPress rolls back test rows, but ACF's value cache survives the transaction.
+        acf_get_store('values')->reset();
+    }
+
     public function getAnnotations(): array
     {
         $annotations = ['class' => [], 'method' => []];

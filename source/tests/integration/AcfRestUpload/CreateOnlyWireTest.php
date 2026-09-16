@@ -153,7 +153,11 @@ class CreateOnlyWireTest extends NativeTestCase
         self::assertSame([$image], $this->attachments);
         self::assertSame('attachment', get_post_type($image));
         self::assertSame($id, (int) get_post($image)->post_parent);
+        $field = acf_get_field(get_post_meta($id, '_image', true));
+        self::assertSame($type === 'offering' ? 'group_69a99cbe03b51' : 'group_69a97690d547c', $field['parent']);
+        self::assertArrayHasKey('acf', $response->get_data());
         $file = get_attached_file($image);
+        self::assertIsArray(getimagesize($file));
         self::assertFileIsReadable($file);
         self::assertSame($bytes, file_get_contents($file));
         fwrite(STDERR, sprintf("Native wire: %s HTTP 201 post=%d image=%d parent=%d sha256=%s attempts=%d\n", $type, $id, $image, (int) get_post($image)->post_parent, hash_file('sha256', $file), $attempts));

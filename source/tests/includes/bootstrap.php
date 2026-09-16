@@ -3,20 +3,10 @@
 declare(strict_types=1);
 
 /*
- * PHPUnit bootstrap for both suites.
- *
- * - Unit suite (source/tests/php): standalone. WordPress classes are provided
- *   by WordPressStubs.php and WordPress functions by Brain Monkey.
- * - Integration suite (source/tests/integration): requires a WordPress test
- *   library. Point WP_TESTS_DIR at a wordpress-tests checkout (with a
- *   configured test database) and ACF_PLUGIN_FILE at the
- *   ACF PRO entry file; this bootstrap then loads WordPress and the plugin
- *   exactly like a normal WordPress test bootstrap would.
- *
- * Example:
- *   export WP_TESTS_DIR=/srv/wordpress-tests/lib
- *   export ACF_PLUGIN_FILE=/srv/wp-content/plugins/advanced-custom-fields-pro/acf.php
- *   composer test:integration
+ * Unit: core value objects and Brain Monkey functions, without a site/database.
+ * Native: integration-bootstrap.php selects the installed WordPress test library.
+ * Requires SPONSOR_INTEGRATION_TESTS=1, an isolated ACF_PLUGIN_FILE and the
+ * disposable sponsor_test_ database enforced by wp-tests-config.php.
  */
 
 $wpTestsDir = getenv('WP_TESTS_DIR');
@@ -61,5 +51,8 @@ if ($wpTestsDir !== null) {
 define('API_SPONSOR_MANAGER_PATH', dirname(__DIR__, 3) . '/');
 define('API_SPONSOR_MANAGER_URL', 'https://example.com/wp-content/plugins/api-sponsor-manager');
 define('API_SPONSOR_MANAGER_TEMPLATE_PATH', API_SPONSOR_MANAGER_PATH . 'templates/');
-require_once __DIR__ . '/WordPressStubs.php';
+foreach (['class-wp-error.php', 'class-wp-post.php', 'class-wp-http-response.php',
+    'rest-api/class-wp-rest-request.php', 'rest-api/class-wp-rest-response.php'] as $classFile) {
+    require_once dirname(__DIR__, 3) . '/vendor/johnpbloch/wordpress-core/wp-includes/' . $classFile;
+}
 require_once __DIR__ . '/PluginTestCase.php';

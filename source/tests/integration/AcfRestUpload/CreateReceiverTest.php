@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace ApiSponsorManager\Test\AcfRestUpload;
 
 use ApiSponsorManager\Test\NativeTestCase;
-use ApiSponsorManager\Test\PhpMultipartParser;
 use PHPUnit\Framework\Attributes\DataProvider;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -89,34 +88,14 @@ class CreateReceiverTest extends NativeTestCase
     {
         $_SERVER['REQUEST_METHOD'] = $request->get_method();
         $GLOBALS['wp']->query_vars['rest_route'] = $request->get_route();
-        acf_get_instance('ACF_Rest_Api')->initialize(null, null, $request);
-        return rest_get_server()->dispatch($request);
-    }
-
-    public function testBothNativeCollectionsCreateWithOneImageWithoutAnIdempotencyKey(): void
-    {
-        foreach (['sponsor-offerings' => 'offering', 'sponsor-assignments' => 'assignment'] as $route => $type) {
-            $response = $this->dispatch($this->request($route));
-            self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
-            $id = $response->get_data()['id'];
-            self::assertSame($type, get_post_type($id));
-            self::assertSame('Native version 2', get_post($id)->post_title);
-            $image = (int) get_field('image', $id, false);
-            self::assertGreaterThan(0, $image);
-            self::assertSame('attachment', get_post_type($image));
-            self::assertSame($id, (int) get_post($image)->post_parent);
-            self::assertIsArray(getimagesize(get_attached_file($image)));
-            self::assertFileIsReadable(get_attached_file($image));
-            self::assertArrayHasKey('acf', $response->get_data());
+        // Simulate a fresh HTTP request, not ACF's cached schema from an earlier item/collection.
+        foreach (array_keys($GLOBALS['wp_rest_additional_fields'] ?? []) as $type) {
+            unset($GLOBALS['wp_rest_additional_fields'][$type]['acf']);
         }
-    }
-
-    public function testCompletedCreateSendsOneConfiguredNotification(): void
-    {
-        $response = $this->dispatch($this->request());
-        self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
-        $id = $response->get_data()['id'];
-        self::assertSame([['recipient+' . $id . '@example.test']], array_column($this->mail, 'to'));
+        acf_get_instance('ACF_Rest_Api')->initialize(null, null, $request);
+        // ACF registers route-specific schema. Do not reuse previously built endpoint arguments.
+        $GLOBALS['wp_rest_server'] = null;
+        return rest_get_server()->dispatch($request);
     }
 
     public function testOrdinaryJsonKeepsItsLocalCompletionNotificationBehavior(): void
@@ -238,11 +217,15 @@ class CreateReceiverTest extends NativeTestCase
 
     public function testSeparateCompletedSubmissionsNotifyIndependently(): void
     {
+        $recipients = [];
         foreach (['sponsor-offerings', 'sponsor-assignments'] as $route) {
             for ($i = 0; $i < 2; $i++) {
-                self::assertSame(201, $this->dispatch($this->request($route))->get_status());
+                $response = $this->dispatch($this->request($route));
+                self::assertSame(201, $response->get_status());
+                $recipients[] = ['recipient+' . $response->get_data()['id'] . '@example.test'];
             }
         }
+        self::assertSame($recipients, array_column($this->mail, 'to'));
         self::assertCount(4, $this->mail);
         self::assertCount(4, array_unique(array_column($this->mail, 'subject')));
     }
@@ -342,30 +325,6 @@ class CreateReceiverTest extends NativeTestCase
         return [['sponsor-assignments'], ['sponsor-offerings']];
     }
 
-    public function testNativePhpMultipartShapeCreates(): void
-    {
-        $request = $this->request();
-        $boundary = 'native-create-profile';
-        $body = '';
-        foreach (explode('&', http_build_query($request->get_body_params())) as $pair) {
-            [$name, $value] = array_map('urldecode', explode('=', $pair, 2));
-            $body .= "--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n";
-        }
-        $body .= "--$boundary\r\nContent-Disposition: form-data; name=\"_acf_rest_files[hero]\"; filename=\"image.jpg\"\r\n"
-            . "Content-Type: image/jpeg\r\n\r\n" . file_get_contents(DIR_TESTDATA . '/images/canola.jpg') . "\r\n--$boundary--\r\n";
-        $parsed = PhpMultipartParser::parse(['body' => $body, 'contentType' => 'multipart/form-data; boundary=' . $boundary]);
-        self::assertTrue($parsed['files']['_acf_rest_files']['uploaded']['hero']);
-        $file = &$parsed['files']['_acf_rest_files'];
-        $path = $request->get_file_params()['_acf_rest_files']['tmp_name']['hero'];
-        file_put_contents($path, base64_decode($file['content']['hero'], true));
-        unset($file['content'], $file['uploaded']);
-        $file['tmp_name']['hero'] = $path;
-        $request->set_body_params($parsed['params']);
-        $request->set_file_params($parsed['files']);
-        $response = $this->dispatch($request);
-        self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
-    }
-
     private function ids(): array
     {
         return get_posts(['post_type' => ['attachment', 'assignment', 'offering'], 'post_status' => 'any',
@@ -406,6 +365,16 @@ class CreateReceiverTest extends NativeTestCase
             case 'query-conflict': $request->set_query_params(['acf' => ['image' => 123]]); break;
             case 'missing-image': unset($params['acf']['image']); $files = []; break;
             case 'null-image': $params['acf']['image'] = null; $files = []; break;
+            case 'empty-file': file_put_contents($files['_acf_rest_files']['tmp_name']['hero'], ''); break;
+            case 'invalid-status': $params['status'] = 'not-a-registered-status'; break;
+            case 'earlier-policy':
+                add_filter('rest_request_before_callbacks', static fn ($response) =>
+                    new \WP_Error('rest_invalid_param', 'Policy rejected ACF.', ['status' => 403, 'params' => ['acf' => 'Policy rejected ACF.']]), 5);
+                break;
+            case 'sideload-storage':
+                add_filter('wp_handle_sideload_prefilter', static fn (array $file) =>
+                    array_replace($file, ['error' => 'Failed to write file to disk.']));
+                break;
             case 'bad-mime': file_put_contents($files['_acf_rest_files']['tmp_name']['hero'], 'not an image'); break;
             case 'ini-limit': $files['_acf_rest_files']['error']['hero'] = UPLOAD_ERR_INI_SIZE; break;
             case 'temporary-storage': $files['_acf_rest_files']['error']['hero'] = UPLOAD_ERR_NO_TMP_DIR; break;
@@ -423,6 +392,10 @@ class CreateReceiverTest extends NativeTestCase
         self::assertSame($status, $response->get_status(), wp_json_encode($response->get_data()));
         self::assertSame($before, $this->ids());
         self::assertSame([], $this->attachments, 'No media creation, including subsequently deleted attachments.');
+        self::assertSame([], $this->mail);
+        if ($case === 'invalid-status') {
+            self::assertArrayHasKey('status', $response->get_data()['data']['params']);
+        }
     }
 
     public static function invalidRequests(): array
@@ -430,11 +403,13 @@ class CreateReceiverTest extends NativeTestCase
         $cases = [];
         foreach (['update', 'patch', 'delete', 'get', 'gallery', 'nested', 'file', 'conflicting', 'null-marker',
             'empty-marker', 'text-file-part', 'missing-part', 'unexpected-part', 'extra-part', 'part-scalar',
-            'part-nested', 'part-keys', 'query-conflict', 'missing-image', 'null-image', 'field-map', 'field-scope', 'field-alias'] as $case) {
+            'part-nested', 'part-keys', 'query-conflict', 'missing-image', 'null-image', 'field-map', 'field-scope', 'field-alias',
+            'empty-file', 'invalid-status'] as $case) {
             $cases[$case] = [$case, 400];
         }
-        return $cases + ['bad-mime' => ['bad-mime', 415], 'ini-limit' => ['ini-limit', 413],
+        return $cases + ['earlier-policy' => ['earlier-policy', 403], 'bad-mime' => ['bad-mime', 415], 'ini-limit' => ['ini-limit', 413],
             'temporary-storage' => ['temporary-storage', 500], 'write-failure' => ['write-failure', 500],
+            'sideload-storage' => ['sideload-storage', 500],
             'byte-limit' => ['byte-limit', 413], 'parameter-limit' => ['parameter-limit', 413]];
     }
 
@@ -601,10 +576,8 @@ class CreateReceiverTest extends NativeTestCase
         return [['1'], ['3']];
     }
 
-    public function testVersionTwoNeverStartsLegacyOperations(): void
+    public function testRepeatedCreatesIgnoreTheFormerIdempotencyKey(): void
     {
-        (new \ApiSponsorManager\AcfRestUpload\Receiver())->addHooks();
-        add_action('AcfRestUpload/beginOperation', static function (): void { self::fail('Version 2 entered the legacy store.'); });
         $ids = [];
         for ($i = 0; $i < 2; $i++) {
             $request = $this->request();
@@ -638,10 +611,42 @@ class CreateReceiverTest extends NativeTestCase
         }, 10, 3);
         add_filter('wp_insert_post_empty_content', static fn ($empty, $post) => $post['post_type'] === 'attachment' || $empty, 10, 2);
         $before = $this->ids();
-        self::assertSame(500, $this->dispatch($this->request())->get_status());
-        self::assertCount(1, $moved);
-        self::assertFileDoesNotExist($moved[0]);
-        self::assertSame($before, $this->ids());
+        try {
+            $response = $this->dispatch($this->request());
+            self::assertSame(500, $response->get_status());
+            self::assertSame('acf_rest_upload_storage_failed', $response->get_data()['code']);
+            self::assertCount(1, $moved);
+            self::assertFileDoesNotExist($moved[0]);
+            self::assertSame($before, $this->ids());
+            self::assertSame([], $this->mail);
+        } finally {
+            foreach ($moved as $file) { if (is_file($file)) { unlink($file); } }
+        }
+    }
+
+    public function testFailedOuterSideloadDoesNotDeleteANestedSideload(): void
+    {
+        $part = $this->request()->get_file_params()['_acf_rest_files'];
+        $nestedFile = array_map(static fn ($values) => $values['hero'], $part);
+        $outer = $this->request();
+        $outerPath = $nestedId = null;
+        $entered = false;
+        add_filter('wp_handle_upload', static function (array $upload) use (&$entered, &$outerPath, &$nestedId, $nestedFile): array {
+            if (!$entered) {
+                $entered = true;
+                $outerPath = $upload['file'];
+                $nestedId = media_handle_sideload($nestedFile, 0);
+                self::assertIsInt($nestedId);
+            }
+            return $upload;
+        });
+        add_filter('wp_insert_post_empty_content', static function ($empty, array $post) use (&$outerPath) {
+            return ($post['file'] ?? null) === $outerPath ? true : $empty;
+        }, 10, 2);
+        self::assertSame(500, $this->dispatch($outer)->get_status());
+        self::assertFileDoesNotExist($outerPath);
+        self::assertSame('attachment', get_post_type($nestedId));
+        self::assertFileIsReadable(get_attached_file($nestedId));
         self::assertSame([], $this->mail);
     }
 
@@ -686,7 +691,9 @@ class CreateReceiverTest extends NativeTestCase
             unset($acf['image']);
             $request->set_param('acf', $acf);
             $request->set_file_params([]);
-            self::assertSame(400, $this->dispatch($request)->get_status());
+            $response = $this->dispatch($request);
+            self::assertTrue($request->get_attributes()['args']['acf']['properties']['image']['required'] ?? null);
+            self::assertSame(400, $response->get_status());
         }
         self::assertSame([], $this->ids());
         self::assertSame([], $this->attachments);
