@@ -33,7 +33,6 @@ $removables = [
     'build.php',
     'composer.json',
     'composer.lock',
-    'webpack.config.js',
     'node_modules',
     'package-lock.json',
     'package.json',

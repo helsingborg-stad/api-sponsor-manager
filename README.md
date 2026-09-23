@@ -22,8 +22,7 @@
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage](#usage)
-- [Upload provider selection](#upload-provider-selection)
-- [Multipart REST upload protocol (v2)](#multipart-rest-upload-protocol-v2)
+- [Multipart REST upload protocol (v3)](#multipart-rest-upload-protocol-v3)
 - [Testing](#testing)
 - [Deploy](#deploy)
 - [Roadmap](#roadmap)
@@ -33,15 +32,13 @@
 
 ## About API Sponsor Manager
 
-[![API Sponsor Manager Screen Shot][product-screenshot]](https://example.com)
-
 Here's a blank template to get started:
 
 ### Built With
 
 * PHP
 * NPM
-* Webpack
+* Vite
 * Modularity
 
 ## Getting Started
@@ -80,106 +77,48 @@ Use this space to show useful examples of how a project can be used. Additional 
 
 _For more examples, please refer to the [Documentation](https://example.com)_
 
-## Upload provider selection
+## Multipart REST upload protocol (v3)
 
-The host selects one receiver at `init` priority 20. It applies
-`AcfRestUpload/provider` to `null`. Null selects the embedded receiver.
-The earlier `ApiSponsorManager/enableCreateUploads` opt-in no longer controls selection.
+The receiver accepts native collection `POST` creates for
+`/wp/v2/sponsor-assignments` and `/wp/v2/sponsor-offerings`. The image field
+must be an ACF `image` field exposed in the native REST schema. No opt-in
+setting is required.
 
-Register an external provider filter during plugin loading, or at an `init`
-priority below 20. Registering it after selection has no effect on that request.
-Return an array with these values:
+Send `X-ACF-Rest-Upload-Version: 3`. Requests without that header pass through
+untouched and keep native JSON behavior; a headerless native create still
+returns 201. A present header whose value is not `3`, including an empty value,
+returns 400 `acf_rest_upload_unsupported_version`. Non-multipart requests, item
+routes, and endpoints that do not keep native post creation return 400
+`acf_rest_upload_unsupported_request`.
 
-- `api_version`: integer `1`.
-- `protocol_versions`: an array containing integer `2`.
-- `boot`: a callable that accepts the injected `WpService` and `AcfService`, in that order.
+The authoritative field values live in the `_acf_rest_payload` JSON body
+parameter. The payload is limited to 1 MiB; a larger payload returns 413
+`acf_rest_upload_too_large`. A `$file:<key>` string at the top level of the
+`acf` object references one `_acf_rest_files[<key>]` binary part. A reference
+that is not top-level or is not an exposed image field returns 400
+`acf_rest_upload_invalid_reference`. A missing or malformed binary part returns
+400 `acf_rest_upload_invalid_parts`.
 
-Provider API version 1 is distinct from HTTP upload protocol version 2.
-The host validates the descriptor before it calls `boot`. Repeated selection
-on the same bootstrap does not call `boot` again. Filters must compose one
-descriptor. The host does not maintain a provider registry.
+Per-file size is limited to `min(8 MiB, wp_max_upload_size())`; the aggregate
+upload is limited to 8 MiB. Exceeding either returns 413
+`acf_rest_upload_too_large`. Field size, width, and height limits also return
+400 or 413. An invalid, unreadable, or empty binary part returns 400
+`acf_rest_upload_invalid_file`. A disallowed image type or a field MIME
+mismatch returns 415 `acf_rest_upload_invalid_file_type`.
 
-The selected provider uses these public hooks:
+Authorization failures return 403 `acf_rest_upload_forbidden`. Storage failures
+return a controlled 500 `acf_rest_upload_storage_failed`. Native authorization,
+schema validation, and image limits still apply.
 
-- `AcfRestUpload/destinations` filters an empty array. Each route maps to
-  `post_type` and `image_field`. The host registers both sponsor collections.
-- `AcfRestUpload/imagePolicy` filters resolved native limits. It also receives
-  the field and exact request. Sponsor images retain their native field limits.
-  A provider must enforce field eligibility and authorization separately.
-  Policy filters may tighten limits but cannot remove native restrictions.
-- `AcfRestUpload/created` receives the post ID, attachment ID or null, and exact
-  request. Emit it only after complete success. The sponsor consumer sends
-  queued notifications through this action.
+The receiver has no idempotency, replay, durable history, or durable
+notification delivery. Separate submissions can create duplicate posts, images,
+and notifications. The receiver cleans up resources owned by an observed failed
+request. A crash can leave partial data.
 
-Only the null fallback loads files from `source/php/AcfRestUpload/`.
-External selection works without that directory. Keep the host bootstrap
-`source/php/UploadProvider.php` and the sponsor integration files available.
-
-An incompatible descriptor never selects the fallback. An incompatible
-descriptor or missing fallback writes a diagnostic to the PHP error log.
-Version-2 requests on registered collection and item route families receive
-`acf_rest_upload_unavailable` with HTTP 503. Requests without the version-2
-header and unrelated routes remain unchanged.
-
-Version 2 supports native collection creates with at most one top-level image.
-It does not provide idempotency. Repeated submissions can create duplicate
-posts, images, and notifications. Observed failures attempt request-owned
-cleanup. A process crash can leave partial data. Notification delivery is not
-guaranteed across a crash.
-
-## Multipart REST upload protocol (v2)
-
-The embedded receiver supports native collection `POST` creates for
-`/wp/v2/sponsor-assignments` and `/wp/v2/sponsor-offerings`. Each destination
-accepts one top-level image field. The image field must be REST exposed and
-must enable **Allow multipart REST upload**.
-
-Send `X-ACF-Rest-Upload-Version: 2`. A value of `$file:<key>` in the destination
-image field references exactly one `_acf_rest_files[<key>]` binary part. The
-receiver accepts existing image IDs when native validation accepts them.
-
-The receiver rejects version 1 and all other protocol versions on registered
-route families. It rejects item routes, non-POST methods, galleries, nested
-references, generic files, reserved null or empty markers, and malformed parts
-before it creates media or saves a post. Requests without the header and
-unregistered routes keep native JSON behavior.
-
-The receiver preserves native authorization, field validation, and image
-limits. It accepts at most 8 MiB of uploaded image data and 1 MiB of parameters.
-Invalid MIME returns 415. Size limits return 413. Unsupported requests return
-400. Storage and cleanup failures return controlled 500 errors.
-
-The receiver has no idempotency, replay, durable history, update rollback, or
-durable notification delivery. Separate submissions can create duplicate posts,
-images, and notifications. The receiver cleans up resources owned by an
-observed failed request. A crash can leave partial data.
-
-The local Database handler keeps `ModularityFrontendForm/afterInsertPost`.
-It sends its normal notification after metadata saving. Version-2 notifications
-send only after the receiver completes the exact request successfully.
-
-Existing legacy post metadata and option records remain in the database. They
-are inert under version 2. A rollback to the previous receiver may depend on
-those records. This release does not delete records or install a wildcard
-cleanup migration.
-
-The frontend sender keeps its version-1 multipart profile for unrelated
-receivers. Do not select that profile for these sponsor routes.
-
-### Coordinated transition and rollback
-
-1. Prepare the receiver and sender artifacts.
-2. Stop sponsor submissions.
-3. Deploy both artifacts.
-4. Select the sender `multipart-create` profile.
-5. Run the agreed smoke checks.
-6. Resume sponsor submissions.
-
-Writing this procedure does not authorize its execution. To roll back, stop
-sponsor submissions, restore both previous artifacts, select the previous
-sender profile, run rollback smoke checks, then resume submissions. Historical
-records remain available for the previous receiver. Rollback does not remove
-duplicates or recover data from a process crash.
+The local Database handler keeps `ModularityFrontendForm/afterInsertPost`. It
+sends its normal notification after metadata saving. A version-3 completion
+notification sends only after the receiver completes the exact request
+successfully.
 
 ## Testing
 
@@ -220,9 +159,8 @@ disabled because it invalidates the live database connection.
 
 Prerequisites:
 - A **disposable** MySQL/MariaDB database whose name starts with `sponsor_test_`.
-- PHP with mysqli, GD, cURL, and process/loopback-server support.
+- PHP with mysqli, GD, and cURL.
 - An isolated licensed ACF PRO installation, not a live plugin checkout.
-- A sender worktree for the wire fixture. Only its dependency-free encoder is loaded.
 
 **The WordPress test bootstrap recreates tables. Never supply a live database.**
 
@@ -233,35 +171,12 @@ export SPONSOR_TEST_DB_HOST=localhost:/path/to/isolated/mysql.sock
 export SPONSOR_TEST_DB_USER=test_user
 export SPONSOR_TEST_DB_PASSWORD=test_password
 export ACF_PLUGIN_FILE=/path/to/isolated/advanced-custom-fields-pro/acf.php
-export SENDER_PLUGIN_DIR=/path/to/modularity-frontend-form-worktree
 composer test:integration
 ```
 
 `WP_TESTS_DIR` defaults to the installed `vendor/wp-phpunit/wp-phpunit` library.
 The bootstrap blocks real mail and external WordPress HTTP requests. All
 addresses and input data in the tests are synthetic.
-
-The `wire` group sends the real sender encoder's body to a temporary PHP
-loopback server. PHP parses `$_POST` and `$_FILES`; the fixture transfers those
-parsed values and file bytes into native WordPress dispatch. It tests numeric
-keys, nested nulls, empty arrays, mixed gallery order, and binary preservation.
-This is parser-to-native-dispatch verification, not authentication or routing
-through a deployed web server. A sandbox must permit HTTP to `127.0.0.1`.
-
-If the sandbox permits that address through its configured proxy but blocks
-direct loopback connections, clear proxy exclusions for the test command:
-`env NO_PROXY= no_proxy= composer test:integration`. Keep the sandbox proxy
-configured and its domain allowlist active. This does not authorize access
-to a denied destination.
-
-For a database-only run when loopback HTTP is unavailable:
-
-```sh
-vendor/bin/phpunit --configuration phpunit-integration.xml --exclude-group wire
-```
-
-Such a run does **not** complete the wire gate. Missing sender configuration
-also skips that gate and must be reported.
 
 Known upstream compatibility: ACF's select schema uses `int` instead of
 `integer`. Native tests explicitly expect WordPress's corresponding notice
@@ -325,4 +240,3 @@ Distributed under the [MIT License][license-url].
 [issues-url]: https://github.com/helsingborg-stad/api-sponsor-manager/issues
 [license-shield]: https://img.shields.io/github/license/helsingborg-stad/api-sponsor-manager.svg?style=flat-square
 [license-url]: https://raw.githubusercontent.com/helsingborg-stad/api-sponsor-manager/master/LICENSE
-[product-screenshot]: images/screenshot.png

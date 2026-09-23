@@ -48,7 +48,6 @@ if ($wpTestsDir !== null) {
 
     require_once $wpTestsDir . '/includes/bootstrap.php';
     require_once __DIR__ . '/NativeTestCase.php';
-    require_once __DIR__ . '/PhpMultipartParser.php';
     return;
 }
 
