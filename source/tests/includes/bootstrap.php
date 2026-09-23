@@ -28,10 +28,14 @@ if ($wpTestsDir !== null) {
     if (getenv('SPONSOR_INTEGRATION_TESTS') !== '1') {
         throw new RuntimeException('Set SPONSOR_INTEGRATION_TESTS=1 only for an isolated, disposable test database.');
     }
+    if (in_array(getenv('SPONSOR_TEST_DB_NAME'), ['sponsor_test_v3_t6', 'sponsor_test_v3_option4', 'sponsor_test_v3_t6_recovery'], true)) {
+        throw new RuntimeException('Transactional PHPUnit must not reset a retained or durable recovery fixture database.');
+    }
     $acfPluginFile = getenv('ACF_PLUGIN_FILE');
     if (!is_string($acfPluginFile) || !is_file($acfPluginFile)) {
         throw new RuntimeException('ACF_PLUGIN_FILE must name an isolated ACF PRO installation.');
     }
+    // The locked wp-phpunit bootstrap defines DISABLE_WP_CRON before WordPress loads; do not define it twice here.
     define('WP_TESTS_CONFIG_FILE_PATH', __DIR__ . '/wp-tests-config.php');
     define('WP_TESTS_PHPUNIT_POLYFILLS_PATH', dirname(__DIR__, 3) . '/vendor/yoast/phpunit-polyfills');
     require_once $wpTestsDir . '/includes/functions.php';

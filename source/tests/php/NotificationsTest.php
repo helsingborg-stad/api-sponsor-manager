@@ -8,8 +8,10 @@ use ApiSponsorManager\Notifications;
 use ApiSponsorManager\Helper\NotificationServices\NotificationService;
 use Mockery;
 use PluginTestCase\PluginTestCase;
+use WP_Error;
 use WP_Post;
 use WP_REST_Request;
+use WP_REST_Response;
 
 class NotificationsTest extends PluginTestCase
 {
@@ -35,6 +37,13 @@ class NotificationsTest extends PluginTestCase
         return new WP_Post((object) ['ID' => $id, 'post_type' => 'offering', 'post_status' => 'draft']);
     }
 
+    private function request(string $version = '3'): WP_REST_Request
+    {
+        $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
+        $request->set_header('X-ACF-Rest-Upload-Version', $version);
+        return $request;
+    }
+
     public function testLocalCompletionConsumesOnlyItsOwnPostQueue(): void
     {
         $this->notifications->onSubmitted('draft', 'new', $this->post(77));
@@ -47,34 +56,48 @@ class NotificationsTest extends PluginTestCase
         self::assertSame([['77@example.test'], ['88@example.test']], array_column($this->mail->sent, 'recipients'));
     }
 
-    public function testFailedVersionTwoCreateDropsItsQueuedNotification(): void
+    public function testNativeSuccessSendsTheQueuedNotificationOnce(): void
     {
-        $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
-        $request->set_header('X-ACF-Rest-Upload-Version', '2');
+        $request = $this->request();
         $this->notifications->beforeRestCallbacks(null, [], $request);
         $this->notifications->onSubmitted('draft', 'new', $this->post(77));
-        $this->notifications->afterRestPostDispatch(null, [], $request);
-        $this->notifications->completedCreate(77, null, $request);
-        self::assertSame([], $this->mail->sent);
+        self::assertSame([], $this->mail->sent, 'A marked create waits for the native result.');
+        $this->notifications->afterRestCallbacks(new WP_REST_Response(['id' => 77], 201), [], $request);
+        self::assertSame([['77@example.test']], array_column($this->mail->sent, 'recipients'));
+        $this->notifications->afterRestCallbacks(new WP_REST_Response(['id' => 77], 201), [], $request);
+        self::assertCount(1, $this->mail->sent, 'Each queued notification is consumed at most once.');
     }
 
-    public function testNestedNativeRequestKeepsItsNotificationOutsideTheVersionTwoQueue(): void
+    public function testNativeErrorDiscardsOnlyItsExactRequestQueue(): void
     {
-        $outer = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
-        $outer->set_header('X-ACF-Rest-Upload-Version', '2');
+        $request = $this->request();
+        $this->notifications->beforeRestCallbacks(null, [], $request);
+        $this->notifications->onSubmitted('draft', 'new', $this->post(77));
+        $this->notifications->afterRestCallbacks(new WP_Error('native_error', 'Rejected', ['status' => 400]), [], $request);
+        $this->notifications->completedCreate(77, $request);
+        self::assertSame([], $this->mail->sent);
+        $this->notifications->onSubmitted('draft', 'new', $this->post(88));
+        $this->notifications->sendEmailsAfterMetaHasBeenSaved(88);
+        self::assertSame([['88@example.test']], array_column($this->mail->sent, 'recipients'));
+    }
+
+    public function testNestedNativeRequestKeepsItsNotificationOutsideTheMarkedQueue(): void
+    {
+        $outer = $this->request();
         $this->notifications->beforeRestCallbacks(null, [], $outer);
-        $nested = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
+        $nested = $this->request('2');
         $this->notifications->beforeRestCallbacks(null, [], $nested);
         $this->notifications->onSubmitted('draft', 'new', $this->post(88));
         $this->notifications->sendEmailsAfterMetaHasBeenSaved(88);
         self::assertSame([['88@example.test']], array_column($this->mail->sent, 'recipients'));
-        $this->notifications->afterRestCallbacks(null, [], $nested);
+        $this->notifications->afterRestCallbacks(new WP_REST_Response(['id' => 88], 201), [], $nested);
         $this->notifications->onSubmitted('draft', 'new', $this->post(77));
         $this->notifications->sendEmailsAfterMetaHasBeenSaved(77);
-        self::assertCount(1, $this->mail->sent, 'The outer create must still wait for completion.');
-        $this->notifications->afterRestCallbacks(null, [], $outer);
-        $this->notifications->completedCreate(77, null, $outer);
+        self::assertCount(1, $this->mail->sent, 'The outer create must still wait for its native result.');
+        $this->notifications->afterRestCallbacks(new WP_REST_Response(['id' => 77], 201), [], $outer);
         self::assertSame([['88@example.test'], ['77@example.test']], array_column($this->mail->sent, 'recipients'));
+        $this->notifications->afterRestCallbacks(new WP_REST_Response(['id' => 77], 201), [], $outer);
+        self::assertCount(2, $this->mail->sent);
     }
 }
 

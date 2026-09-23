@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ApiSponsorManager\Test\AcfRestUpload;
 
 use ApiSponsorManager\Test\NativeTestCase;
+use ApiSponsorManager\AcfRestUpload\Recovery;
 use PHPUnit\Framework\Attributes\DataProvider;
 use WP_REST_Posts_Controller;
 use WP_REST_Request;
@@ -231,7 +232,7 @@ class InputContractTest extends NativeTestCase
     public static function referenceKeys(): array { return [['first'], ['0'], ['opaque.key'], ['../not-a-path']]; }
 
     #[DataProvider('existingImages')]
-    public function testExistingImagesRemainUnownedWithoutUploadPermission(bool $parented, bool $fail): void
+    public function testExistingImagesAreNeverUploadedOrMarked(bool $parented, bool $fail): void
     {
         $parent = $parented ? self::factory()->post->create() : 0;
         $image = self::factory()->attachment->create_upload_object(DIR_TESTDATA . '/images/canola.jpg', $parent);
@@ -244,11 +245,21 @@ class InputContractTest extends NativeTestCase
         $request = $this->request(['title' => 'Existing', 'acf' => ['image_a' => $image]]);
         $response = $this->dispatch($request);
         self::assertSame($fail ? 400 : 201, $response->get_status(), wp_json_encode($response->get_data()));
-        self::assertSame($parent, (int) get_post($image)->post_parent);
         self::assertFileIsReadable($path);
         self::assertSame([], $this->attachments);
-        if (!$fail) { self::assertSame($image, (int) get_post_meta($response->get_data()['id'], 'image_a', true)); }
-        else { self::assertSame([], get_posts(['post_type' => 'input_contract', 'post_status' => 'any'])); }
+        self::assertSame('', get_post_meta($image, Recovery::CLEANUP, true));
+        if ($parented) {
+            self::assertSame($parent, (int) get_post($image)->post_parent);
+        } else {
+            // Native ACF owns the connect decision for an unparented existing image now.
+            self::assertGreaterThan(0, (int) get_post($image)->post_parent);
+        }
+        if (!$fail) {
+            self::assertSame($image, (int) get_post_meta($response->get_data()['id'], 'image_a', true));
+        } else {
+            // A native rejection after insertion is not a receiver cleanup signal.
+            self::assertNotSame([], get_posts(['post_type' => 'input_contract', 'post_status' => 'any']));
+        }
         wp_delete_attachment($image, true);
     }
 
@@ -261,6 +272,28 @@ class InputContractTest extends NativeTestCase
         self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
         self::assertSame([], $this->attachments);
     }
+
+    #[DataProvider('incompleteCreates')]
+    public function testZeroImagePostAndSharedReferenceUseTheNativeResult(bool $shared): void
+    {
+        $request = $this->request($shared ? ['title' => 'Shared reference', 'acf' => ['image_a' => '$file:first', 'image_b' => '$file:first']]
+            : ['title' => 'Missing zero-image post']);
+        if ($shared) { $this->images($request); }
+        $response = $this->dispatch($request);
+        // The native result is authoritative; a 201 no longer needs receiver verification.
+        self::assertSame(201, $response->get_status(), wp_json_encode($response->get_data()));
+        self::assertNotNull(get_post($response->get_data()['id']));
+        if ($shared) {
+            self::assertCount(1, $this->attachments);
+            self::assertNotNull(get_post($this->attachments[0]));
+            self::assertSame('', get_post_meta($this->attachments[0], Recovery::CLEANUP, true));
+            self::assertSame($this->attachments[0], (int) get_post_meta($response->get_data()['id'], 'image_b', true));
+        } else {
+            self::assertSame([], $this->attachments);
+        }
+    }
+
+    public static function incompleteCreates(): array { return [[false], [true]]; }
 
     #[DataProvider('forbiddenReferences')]
     public function testReservedReferencesMustIdentifyUniqueExposedImages(array $values, array $field, bool $hidden, bool $ambiguous): void

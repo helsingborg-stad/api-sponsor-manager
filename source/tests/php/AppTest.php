@@ -6,6 +6,8 @@ namespace ApiSponsorManager\Test;
 
 use AcfService\AcfService;
 use ApiSponsorManager\App;
+use ApiSponsorManager\AcfRestUpload\CreateReceiver;
+use ApiSponsorManager\AcfRestUpload\Recovery;
 use ApiSponsorManager\DeleteExpiredPost;
 use ApiSponsorManager\Helper\CronScheduler\CronEventInterface;
 use ApiSponsorManager\Helper\CronScheduler\CronSchedulerInterface;
@@ -27,10 +29,7 @@ class AppTest extends PluginTestCase
         }
         $wp = Mockery::mock(WpService::class);
         $wp->shouldReceive('addAction')->andReturn(true)->byDefault();
-        $wp->shouldReceive('addFilter')->once()
-            ->with('AcfRestUpload/destinations', Mockery::type('callable'))->andReturn(true);
-        $wp->shouldReceive('addFilter')->once()
-            ->with('AcfRestUpload/imagePolicy', Mockery::type('callable'), 10, 3)->andReturn(true);
+        $wp->shouldReceive('addFilter')->andReturn(true)->byDefault();
         if ($configure !== null) { $configure($wp); }
 
         return new App(
@@ -67,7 +66,6 @@ class AppTest extends PluginTestCase
 
         $this->makeApp($scheduler);
 
-        self::assertCount(1, $scheduler->events);
         $event = $scheduler->events[0];
         self::assertSame('daily', $event->getRecurrence());
         self::assertSame('sponsor_manager_delete_expired_posts_cron', $event->getHook());
@@ -78,38 +76,27 @@ class AppTest extends PluginTestCase
         self::assertIsCallable($callback);
     }
 
-    #[\PHPUnit\Framework\Attributes\DataProvider('providerSelections')]
-    public function testCreateUploadHooksBootOnlyTheSelectedProvider(bool $embedded): void
+    public function testConstructorRegistersTheHourlyCleanupOnTheInjectedScheduler(): void
     {
-        $boot = null;
-        $calls = 0;
-        $this->makeApp(new AppSchedulerRecorder(), static function ($wp) use ($embedded, &$boot, &$calls): void {
-            $wp->shouldReceive('addAction')->andReturnUsing(static function ($hook, $callback, $priority = 10) use (&$boot): bool {
-                if ($hook === 'init' && $priority === 20) { $boot = $callback; }
-                return true;
-            });
-            $descriptor = $embedded ? null : ['api_version' => 1, 'protocol_versions' => [2],
-                'boot' => static function ($actualWp, $acf) use ($wp, &$calls): void {
-                    self::assertSame($wp, $actualWp);
-                    self::assertInstanceOf(AcfService::class, $acf);
-                    $calls++;
-                }];
-            $wp->shouldReceive('applyFilters')->once()->with('AcfRestUpload/provider', null)->andReturn($descriptor);
-            foreach (['rest_pre_dispatch' => [20, 3], 'rest_request_before_callbacks' => [10, 3],
-                'rest_dispatch_request' => [10, 4], 'rest_request_after_callbacks' => [PHP_INT_MAX, 3]] as $hook => [$priority, $args]) {
-                $wp->shouldReceive('addFilter')->times($embedded ? 1 : 0)
-                    ->with($hook, Mockery::type('callable'), $priority, $args)->andReturn(true);
-            }
-        });
-        self::assertIsCallable($boot);
-        $boot();
-        $boot();
-        self::assertSame($embedded ? 0 : 1, $calls);
+        $scheduler = new AppSchedulerRecorder();
+        $this->makeApp($scheduler);
+        self::assertCount(2, $scheduler->events);
+        $event = $scheduler->events[1];
+        self::assertSame('hourly', $event->getRecurrence());
+        self::assertSame(Recovery::HOOK, $event->getHook());
+        self::assertInstanceOf(Recovery::class, $event->getHookCallback()[0]);
+        self::assertSame('cleanup', $event->getHookCallback()[1]);
+        self::assertIsCallable($event->getHookCallback());
+        // Do not execute the worker: deletion needs separately approved resources.
     }
 
-    public static function providerSelections(): array
+    public function testConstructorBootsTheNativeReceiverWithoutProviderSelection(): void
     {
-        return [[false], [true]];
+        $this->makeApp(new AppSchedulerRecorder(), static function ($wp): void {
+            $wp->shouldNotReceive('applyFilters')->with('AcfRestUpload/provider', null);
+            $wp->shouldReceive('addFilter')->once()->with('rest_pre_dispatch',
+                Mockery::on(static fn ($callback) => $callback[0] instanceof CreateReceiver && is_callable($callback)), 20, 3)->andReturn(true);
+        });
     }
 }
 

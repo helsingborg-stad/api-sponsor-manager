@@ -50,30 +50,14 @@ final class CreateImage
         return null;
     }
 
-    public function sideload(array $file): int|WP_Error
+    public function sideload(array $file, array $postData): int|WP_Error
     {
         require_once ABSPATH . 'wp-admin/includes/file.php';
         require_once ABSPATH . 'wp-admin/includes/media.php';
         require_once ABSPATH . 'wp-admin/includes/image.php';
-        $moved = [];
-        $track = static function ($move, array $upload, string $destination) use ($file, &$moved) {
-            if ($move === null && ($upload['tmp_name'] ?? null) === $file['tmp_name'] && !file_exists($destination)) {
-                $moved[] = $destination;
-            }
-            return $move;
-        };
-        $this->wpService->addFilter('pre_move_uploaded_file', $track, PHP_INT_MAX, 3);
-        try {
-            $result = $this->wpService->mediaHandleSideload($file, 0);
-        } finally {
-            $this->wpService->removeFilter('pre_move_uploaded_file', $track, PHP_INT_MAX);
-        }
+        // Temporary owner metadata identifies this request's uploads before native metadata generation.
+        $result = $this->wpService->mediaHandleSideload($file, 0, null, $postData);
         if ($result instanceof WP_Error || $result <= 0) {
-            foreach ($moved as $path) {
-                if (is_file($path) && !unlink($path)) {
-                    return CreateReceiver::error('cleanup_failed', 500, 'Could not delete the failed image upload.');
-                }
-            }
             return CreateReceiver::error('storage_failed', 500, 'Could not store the uploaded image.');
         }
         return $result;

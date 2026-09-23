@@ -8,6 +8,7 @@ use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
 use ApiSponsorManager\Helper\NotificationServices\NotificationService;
 use WP_Post;
 use WP_REST_Request;
+use WP_REST_Response;
 use WpService\Contracts\__;
 use WpService\Contracts\AddAction;
 use WpService\Contracts\GetEditPostLink;
@@ -98,22 +99,19 @@ class Notifications implements Hookable {
     public function beforeRestCallbacks($response, $handler, WP_REST_Request $request): mixed
     {
         $this->requests[spl_object_id($request)] = $request;
-        if ($request->get_header('X-ACF-Rest-Upload-Version') === '3') {
-            // Register after receiver boot so this runs after its finalizer, including internal dispatch.
-            add_filter('rest_request_after_callbacks', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
-        }
         return $response;
     }
 
+    /** The native create result is the only completion signal: 201 consumes the queue, anything else discards it. */
     public function afterRestCallbacks($response, $handler, WP_REST_Request $request): mixed
     {
         unset($this->requests[spl_object_id($request)]);
-        return $response;
-    }
-
-    public function afterRestPostDispatch($response, $handler, WP_REST_Request $request): mixed
-    {
-        unset($this->createQueues[spl_object_id($request)]);
+        if (!$response instanceof WP_REST_Response || $response->get_status() !== 201) {
+            $this->discardCreate($request);
+            return $response;
+        }
+        try { $this->completedCreate((int) ($response->get_data()['id'] ?? 0), $request); }
+        catch (\Throwable) { /* A confirmed native create is not failed by its notification observer. */ }
         return $response;
     }
 
@@ -121,10 +119,15 @@ class Notifications implements Hookable {
     {
         $id = spl_object_id($request);
         $queue = $this->createQueues[$id][$postId] ?? [];
-        unset($this->createQueues[$id][$postId]);
+        unset($this->createQueues[$id]);
         foreach ($queue as $params) {
             $this->composeAndSendEmail(...$params);
         }
+    }
+
+    public function discardCreate(WP_REST_Request $request): void
+    {
+        unset($this->createQueues[spl_object_id($request)], $this->requests[spl_object_id($request)]);
     }
 
     private function queueForCreate(array $template, WP_Post $post): bool
@@ -145,8 +148,6 @@ class Notifications implements Hookable {
         $this->wpService->addAction('ModularityFrontendForm/afterInsertPost', [$this, 'sendEmailsAfterMetaHasBeenSaved'], 1, 1);
 
         add_filter('rest_request_before_callbacks', [$this, 'beforeRestCallbacks'], 1, 3);
-        add_filter('rest_request_after_callbacks', [$this, 'afterRestCallbacks'], PHP_INT_MAX - 1, 3);
-        add_filter('rest_post_dispatch', [$this, 'afterRestPostDispatch'], PHP_INT_MAX, 3);
-        $this->wpService->addAction('ApiSponsorManager/uploadCreated', [$this, 'completedCreate'], 1, 2);
+        add_filter('rest_request_after_callbacks', [$this, 'afterRestCallbacks'], PHP_INT_MAX, 3);
     }
 }

@@ -6,25 +6,24 @@ namespace ApiSponsorManager\AcfRestUpload;
 
 use AcfService\AcfService;
 use WP_Error;
-use WP_Post;
 use WP_REST_Posts_Controller;
 use WP_REST_Request;
-use WP_REST_Response;
 use WpService\WpService;
 
 /** Prepare real image IDs before native schema validation, without changing that schema. */
 final class CreateReceiver
 {
-    private array $contexts = [];
+    private Recovery $recovery;
 
-    public function __construct(private WpService $wpService, private AcfService $acfService) {}
+    public function __construct(private WpService $wpService, private AcfService $acfService, ?Recovery $recovery = null)
+    {
+        $this->recovery = $recovery ?? new Recovery($wpService);
+    }
 
     public function addHooks(): void
     {
         // ACF initializes its request-specific schema at priority 10.
         $this->wpService->addFilter('rest_pre_dispatch', [$this, 'prepare'], 20, 3);
-        $this->wpService->addFilter('rest_request_after_callbacks', [$this, 'afterCallbacks'], PHP_INT_MAX, 3);
-        $this->wpService->addFilter('acf/connect_attachment_to_post', [$this, 'preserveExistingParent'], 10, 3);
     }
 
     public function prepare(mixed $response, mixed $server, WP_REST_Request $request): mixed
@@ -92,44 +91,31 @@ final class CreateReceiver
         if ($payload['files'] !== [] && !$this->wpService->currentUserCan('upload_files')) {
             return self::error('forbidden', 403, 'You are not allowed to upload files.');
         }
-        $id = spl_object_id($request);
-        $this->contexts[$id] = ['request' => $request, 'type' => $type, 'post' => null,
-            'attachments' => [], 'references' => $payload['references'], 'hook' => null];
+        if (!$this->recovery->begin($request)) {
+            return self::error('storage_failed', 500, 'Could not establish safe storage.');
+        }
+        $attachments = [];
         try {
             foreach ($payload['files'] as $key => $file) {
-                $attachment = $image->sideload($file);
-                if ($attachment instanceof WP_Error) { return $this->afterCallbacks($attachment, $handler, $request); }
-                $this->contexts[$id]['attachments'][$key] = $attachment;
-            }
-            $acf = $request->get_param('acf');
-            foreach ($payload['references'] as $name => $key) { $acf[$name] = $this->contexts[$id]['attachments'][$key]; }
-            if ($payload['references'] !== []) { $request->set_param('acf', $acf); }
-            $hook = function ($post, $actual, $creating) use ($request, $id): void {
-                if ($actual !== $request || !$creating) { return; }
-                $this->contexts[$id]['post'] = $post->ID;
-                foreach ($this->contexts[$id]['attachments'] as $attachment) {
-                    $this->wpService->wpUpdatePost(['ID' => $attachment, 'post_parent' => $post->ID], true);
+                $attachment = $this->recovery->upload($request, fn ($data) => $image->sideload($file, $data));
+                if ($attachment instanceof WP_Error) {
+                    $this->recovery->markFailed($request);
+                    return $attachment;
                 }
-            };
-            $this->contexts[$id]['hook'] = $hook;
-            $this->wpService->addAction('rest_insert_' . $type, $hook, 10, 3);
+                $attachments[$key] = $attachment;
+            }
         } catch (\Throwable) {
-            return $this->afterCallbacks(self::error('storage_failed', 500, 'Could not prepare the create.'), $handler, $request);
+            $this->recovery->markFailed($request);
+            return self::error('storage_failed', 500, 'Could not prepare the create.');
+        } finally {
+            $this->recovery->release($request);
         }
+        $acf = $request->get_param('acf');
+        foreach ($payload['references'] as $name => $key) { $acf[$name] = $attachments[$key]; }
+        if ($payload['references'] !== []) { $request->set_param('acf', $acf); }
         // WordPress now performs all normal schema/ACF validation and sanitization with real IDs,
         // checks native permission again, and calls the original native create callback.
         return null;
-    }
-
-    public function preserveExistingParent(bool $connect, mixed $attachment, mixed $post): bool
-    {
-        foreach ($this->contexts as $context) {
-            if ($context['post'] === (int) $post) {
-                // Native ACF otherwise adopts unparented existing images during its save.
-                return $connect && in_array((int) $attachment, $context['attachments'], true);
-            }
-        }
-        return $connect;
     }
 
     private function resolveField(string $postType, string $name): ?array
@@ -152,70 +138,6 @@ final class CreateReceiver
             }
         }
         return count($matches) === 1 ? $matches[0] : null;
-    }
-
-    public function afterCallbacks(mixed $response, mixed $handler, WP_REST_Request $request): mixed
-    {
-        $id = spl_object_id($request);
-        $context = $this->contexts[$id] ?? null;
-        if ($context === null) { return $response; }
-        unset($this->contexts[$id]);
-        if ($context['hook'] !== null) { $this->wpService->removeAction('rest_insert_' . $context['type'], $context['hook'], 10); }
-        try {
-            $failed = $response instanceof WP_Error || !$response instanceof WP_REST_Response || $response->get_status() !== 201;
-            if (!$failed && !$this->checkComplete($context)) {
-                $response = self::error('storage_failed', 500, 'Could not verify the saved create.');
-                $failed = true;
-            }
-        } catch (\Throwable) {
-            $response = self::error('storage_failed', 500, 'Could not verify the saved create.');
-            $failed = true;
-        }
-        if ($failed) {
-            return $this->cleanup($context) ? $response : self::error('cleanup_failed', 500, 'Could not remove the failed create.');
-        }
-        // Notification delivery is not part of the storage transaction.
-        try {
-            $this->wpService->doAction('ApiSponsorManager/uploadCreated', $context['post'], $request);
-        } catch (\Throwable) {
-            // Storage is already verified; mail failure must not roll it back.
-            return $response;
-        }
-        return $response;
-    }
-
-    private function checkComplete(array $context): bool
-    {
-        if (!is_int($context['post']) || !$this->wpService->getPost($context['post']) instanceof WP_Post) { return false; }
-        foreach ($context['attachments'] as $attachment) {
-            $stored = $this->wpService->getPost($attachment);
-            $file = $this->wpService->getAttachedFile($attachment);
-            if (!$stored instanceof WP_Post || $stored->post_type !== 'attachment' || (int) $stored->post_parent !== $context['post']
-                || !is_string($file) || !is_readable($file)) { return false; }
-        }
-        foreach ($context['references'] as $name => $key) {
-            if ((int) $this->wpService->getPostMeta($context['post'], $name, true) !== $context['attachments'][$key]) { return false; }
-        }
-        return true;
-    }
-
-    private function cleanup(array $context): bool
-    {
-        $clean = true;
-        foreach ($context['attachments'] as $attachment) {
-            try {
-                $file = $this->wpService->getAttachedFile($attachment);
-                $this->wpService->wpDeleteAttachment($attachment, true);
-                if ($this->wpService->getPost($attachment) !== null || (is_string($file) && is_file($file))) { $clean = false; }
-            } catch (\Throwable) { $clean = false; }
-        }
-        if (is_int($context['post'])) {
-            try {
-                $this->wpService->wpDeletePost($context['post'], true);
-                if ($this->wpService->getPost($context['post']) !== null) { $clean = false; }
-            } catch (\Throwable) { $clean = false; }
-        }
-        return $clean;
     }
 
     public static function error(string $code, int $status, string $message): WP_Error
