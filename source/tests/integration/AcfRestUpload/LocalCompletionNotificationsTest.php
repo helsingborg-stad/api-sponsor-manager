@@ -63,9 +63,9 @@ class LocalCompletionNotificationsTest extends NativeTestCase
     private function request(string $route = 'sponsor-offerings'): WP_REST_Request
     {
         $request = new WP_REST_Request('POST', '/wp/v2/' . $route);
-        $request->set_header('X-ACF-Rest-Upload-Version', '2');
+        $request->set_header('X-ACF-Rest-Upload-Version', '4');
         $request->set_body_params(['title' => 'Native version 2', 'status' => 'draft', 'acf' => [
-            'image' => '$file:hero', 'date' => '20260915', 'time' => '12:00:00',
+            'image' => 0, 'date' => '20260915', 'time' => '12:00:00',
             'due_date' => '20260930', 'due_time' => '12:00:00', 'description' => 'Single image create',
             'contact_method' => ['mail'], 'organization_name' => 'Isolated organization',
             'organization_contact' => 'Test contact', 'organization_email' => 'contact@example.test',
@@ -74,7 +74,7 @@ class LocalCompletionNotificationsTest extends NativeTestCase
         $path = wp_tempnam('create-image.jpg');
         copy(DIR_TESTDATA . '/images/canola.jpg', $path);
         $this->files[] = $path;
-        $request->set_file_params(['_acf_rest_files' => [
+        $request->set_file_params(['acf' => [
             'name' => ['hero' => 'image.jpg'], 'type' => ['hero' => 'image/jpeg'],
             'tmp_name' => ['hero' => $path], 'error' => ['hero' => UPLOAD_ERR_OK],
             'size' => ['hero' => filesize($path)],

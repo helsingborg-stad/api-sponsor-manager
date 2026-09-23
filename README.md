@@ -77,26 +77,27 @@ Use this space to show useful examples of how a project can be used. Additional 
 
 _For more examples, please refer to the [Documentation](https://example.com)_
 
-## Multipart REST upload protocol (v3)
+## Multipart REST upload protocol (v4)
 
 The receiver accepts native collection `POST` creates for
 `/wp/v2/sponsor-assignments` and `/wp/v2/sponsor-offerings`. The image field
 must be an ACF `image` field exposed in the native REST schema. No opt-in
 setting is required.
 
-Send `X-ACF-Rest-Upload-Version: 3`. Requests without that header pass through
+Send `X-ACF-Rest-Upload-Version: 4`. Requests without that header pass through
 untouched and keep native JSON behavior; a headerless native create still
-returns 201. A present header whose value is not `3`, including an empty value,
+returns 201. A present header whose value is not `4`, including an empty value,
 returns 400 `acf_rest_upload_unsupported_version`. Non-multipart requests, item
 routes, and endpoints that do not keep native post creation return 400
 `acf_rest_upload_unsupported_request`.
 
-The authoritative field values live in the `_acf_rest_payload` JSON body
-parameter. The payload is limited to 1 MiB; a larger payload returns 413
-`acf_rest_upload_too_large`. A `$file:<key>` string at the top level of the
-`acf` object references one `_acf_rest_files[<key>]` binary part. A reference
-that is not top-level or is not an exposed image field returns 400
-`acf_rest_upload_invalid_reference`. A missing or malformed binary part returns
+Send ordinary fields directly with PHP-compatible names such as `title`,
+`acf[location][lat]`, and `acf[image]`. An uploaded image uses the same
+top-level `acf[image]` destination name as its binary part. Existing attachment
+IDs remain ordinary `acf[image]` values. A file may target only an exposed
+top-level ACF image field; an unsupported field returns 400
+`acf_rest_upload_invalid_reference`. A body value and file for the same image
+field returns 400 `acf_rest_upload_ambiguous_image`; malformed file bags return
 400 `acf_rest_upload_invalid_parts`.
 
 Per-file size is limited to `min(8 MiB, wp_max_upload_size())`; the aggregate
@@ -116,7 +117,7 @@ and notifications. The receiver cleans up resources owned by an observed failed
 request. A crash can leave partial data.
 
 The local Database handler keeps `ModularityFrontendForm/afterInsertPost`. It
-sends its normal notification after metadata saving. A version-3 completion
+sends its normal notification after metadata saving. A version-4 completion
 notification sends only after the receiver completes the exact request
 successfully.
 

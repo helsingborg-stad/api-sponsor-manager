@@ -37,7 +37,7 @@ class NotificationsTest extends PluginTestCase
         return new WP_Post((object) ['ID' => $id, 'post_type' => 'offering', 'post_status' => 'draft']);
     }
 
-    private function request(string $version = '3'): WP_REST_Request
+    private function request(string $version = '4'): WP_REST_Request
     {
         $request = new WP_REST_Request('POST', '/wp/v2/sponsor-offerings');
         $request->set_header('X-ACF-Rest-Upload-Version', $version);

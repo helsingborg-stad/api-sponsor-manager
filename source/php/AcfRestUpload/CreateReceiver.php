@@ -30,7 +30,7 @@ final class CreateReceiver
     {
         $version = $request->get_header('X-ACF-Rest-Upload-Version');
         if ($response !== null || $version === null) { return $response; }
-        if ($version !== '3') { return self::error('unsupported_version', 400, 'Only protocol version 3 is supported.'); }
+        if ($version !== '4') { return self::error('unsupported_version', 400, 'Only protocol version 4 is supported.'); }
         if ($request->get_method() !== 'POST' || ($request->get_content_type()['value'] ?? '') !== 'multipart/form-data') {
             return self::error('unsupported_request', 400, 'Use a multipart native collection create.');
         }
@@ -65,12 +65,12 @@ final class CreateReceiver
         $request->set_default_params([]);
         $image = new CreateImage($this->wpService);
         $total = 0;
-        foreach ($payload['references'] as $name => $key) {
+        foreach ($payload['files'] as $name => $file) {
             $field = $this->resolveField($type, (string) $name);
             if ($field === null || ($field['type'] ?? null) !== 'image' || ($handler['args']['acf']['properties'][$name] ?? null) === null) {
-                return self::error('invalid_reference', 400, 'The reference must identify an exposed native image field.');
+                return self::error('invalid_reference', 400, 'The upload must identify an exposed native image field.');
             }
-            $error = $image->validate($payload['files'][$key], $field);
+            $error = $image->validate($file, $field);
             if ($error !== null) { return $error; }
         }
         foreach ($payload['files'] as $file) { $total += $file['size']; }
@@ -96,13 +96,13 @@ final class CreateReceiver
         }
         $attachments = [];
         try {
-            foreach ($payload['files'] as $key => $file) {
+            foreach ($payload['files'] as $name => $file) {
                 $attachment = $this->recovery->upload($request, fn ($data) => $image->sideload($file, $data));
                 if ($attachment instanceof WP_Error) {
                     $this->recovery->markFailed($request);
                     return $attachment;
                 }
-                $attachments[$key] = $attachment;
+                $attachments[$name] = $attachment;
             }
         } catch (\Throwable) {
             $this->recovery->markFailed($request);
@@ -111,8 +111,12 @@ final class CreateReceiver
             $this->recovery->release($request);
         }
         $acf = $request->get_param('acf');
-        foreach ($payload['references'] as $name => $key) { $acf[$name] = $attachments[$key]; }
-        if ($payload['references'] !== []) { $request->set_param('acf', $acf); }
+        if (!is_array($acf)) { $acf = []; }
+        foreach ($attachments as $name => $attachment) { $acf[$name] = $attachment; }
+        if ($attachments !== []) {
+            $request->set_param('acf', $acf);
+            $request->set_file_params([]);
+        }
         // WordPress now performs all normal schema/ACF validation and sanitization with real IDs,
         // checks native permission again, and calls the original native create callback.
         return null;
