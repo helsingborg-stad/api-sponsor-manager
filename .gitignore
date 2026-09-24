@@ -28,4 +28,3 @@
 /vendor/
 /.phpunit.cache/
 /.phpunit.integration-cache/
-/build/

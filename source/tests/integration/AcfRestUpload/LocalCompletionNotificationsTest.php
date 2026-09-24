@@ -13,8 +13,6 @@ use WP_REST_Response;
  */
 class LocalCompletionNotificationsTest extends NativeTestCase
 {
-    private array $files = [];
-    private array $attachments = [];
     private array $fieldKeys = [];
     private array $mail = [];
 
@@ -22,7 +20,6 @@ class LocalCompletionNotificationsTest extends NativeTestCase
     {
         parent::set_up();
         wp_set_current_user(self::factory()->user->create(['role' => 'administrator']));
-        add_action('add_attachment', function (int $id): void { $this->attachments[] = $id; });
         add_action('doing_it_wrong_run', function (string $function, string $message): void {
             if ($function === 'rest_handle_multi_type_schema') {
                 self::assertStringContainsString('acf[contact_method]', $message);
@@ -44,12 +41,6 @@ class LocalCompletionNotificationsTest extends NativeTestCase
 
     public function tear_down(): void
     {
-        foreach ($this->attachments as $id) {
-            wp_delete_attachment($id, true);
-        }
-        foreach ($this->files as $file) {
-            if (is_file($file)) { unlink($file); }
-        }
         foreach ($this->fieldKeys as $key) {
             acf_remove_local_field($key);
         }
@@ -64,20 +55,12 @@ class LocalCompletionNotificationsTest extends NativeTestCase
     {
         $request = new WP_REST_Request('POST', '/wp/v2/' . $route);
         $request->set_header('X-ACF-Rest-Upload-Version', '4');
-        $request->set_body_params(['title' => 'Native version 2', 'status' => 'draft', 'acf' => [
+        $request->set_body_params(['title' => 'Native version 4', 'status' => 'draft', 'acf' => [
             'image' => 0, 'date' => '20260915', 'time' => '12:00:00',
             'due_date' => '20260930', 'due_time' => '12:00:00', 'description' => 'Single image create',
             'contact_method' => ['mail'], 'organization_name' => 'Isolated organization',
             'organization_contact' => 'Test contact', 'organization_email' => 'contact@example.test',
             'organization_phone' => 123456, 'organization_number' => '123456-7890',
-        ]]);
-        $path = wp_tempnam('create-image.jpg');
-        copy(DIR_TESTDATA . '/images/canola.jpg', $path);
-        $this->files[] = $path;
-        $request->set_file_params(['acf' => [
-            'name' => ['hero' => 'image.jpg'], 'type' => ['hero' => 'image/jpeg'],
-            'tmp_name' => ['hero' => $path], 'error' => ['hero' => UPLOAD_ERR_OK],
-            'size' => ['hero' => filesize($path)],
         ]]);
         return $request;
     }

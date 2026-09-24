@@ -22,7 +22,7 @@
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage](#usage)
-- [Multipart REST upload protocol (v3)](#multipart-rest-upload-protocol-v3)
+- [Multipart REST upload protocol (v4)](#multipart-rest-upload-protocol-v4)
 - [Testing](#testing)
 - [Deploy](#deploy)
 - [Roadmap](#roadmap)
@@ -32,13 +32,15 @@
 
 ## About API Sponsor Manager
 
+[![API Sponsor Manager Screen Shot][product-screenshot]](https://example.com)
+
 Here's a blank template to get started:
 
 ### Built With
 
 * PHP
 * NPM
-* Vite
+* Webpack
 * Modularity
 
 ## Getting Started
@@ -142,14 +144,6 @@ env -u WP_TESTS_DIR composer test
 composer lint
 ```
 
-Mago is pinned to 1.8.0 because this release does not autoload its internal
-helper functions. Releases that autoload these functions can cause a fatal
-`Cannot redeclare Mago\Internal\locked()` when Municipio loads its own copy.
-Keep this pin until a replacement has been verified with both autoloaders.
-After pulling this change, run `composer install` in the plugin directory to
-replace an incompatible installed version and regenerate the autoloader.
-Do not edit generated files under `vendor/`.
-
 ### Native integration tests
 
 The integration suite uses `phpunit-integration.xml`. It boots this plugin's
@@ -187,24 +181,7 @@ disabling notice assertions. Upstream PHPUnit deprecation reports remain visible
 
 ## Deploy
 
-Install production dependencies with `composer install --no-dev --prefer-dist`
-(also used by `build.php`). Do not deploy a development `vendor/` directory:
-Mago and the test tools are not runtime dependencies.
-
-Run `php build.php --cleanup` from the root of a disposable source copy only.
-Cleanup removes build inputs. Do not run it in a deployed plugin or a working
-checkout. The build uses the committed npm lockfile; browser-data and dependency
-updates require a separate reviewed change. The ACF export manager is required
-by the plugin bootstrap and must be present in the production autoloader.
-
-Before accepting an artifact, verify generated assets and production autoloading
-without a development vendor directory. Check that plugin and dependency tests,
-PHPUnit configuration, development tools, local verification helpers, and
-credentials are absent. Service contracts whose names end in `Test.php` are
-runtime code, not test suites. Keep build credentials outside the source copy.
-Record source and lockfile identities, artifact checksums, commands, and audit
-findings. A successful local build does not establish production consumer
-compatibility, effective web/proxy upload limits, or deployment approval.
+Instructions for deploys.
 
 ## Roadmap
 
@@ -241,3 +218,4 @@ Distributed under the [MIT License][license-url].
 [issues-url]: https://github.com/helsingborg-stad/api-sponsor-manager/issues
 [license-shield]: https://img.shields.io/github/license/helsingborg-stad/api-sponsor-manager.svg?style=flat-square
 [license-url]: https://raw.githubusercontent.com/helsingborg-stad/api-sponsor-manager/master/LICENSE
+[product-screenshot]: images/screenshot.png
