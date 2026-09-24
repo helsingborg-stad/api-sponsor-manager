@@ -140,44 +140,9 @@ The unit suite (`source/tests/php`, `phpunit.xml`) does not load WordPress.
 
 ```sh
 composer install
-env -u WP_TESTS_DIR composer test
+composer test
 composer lint
 ```
-
-### Native integration tests
-
-The integration suite uses `phpunit-integration.xml`. It boots this plugin's
-entry file, its production ACF groups, native sponsor controllers, and real
-database/media operations. It does not replace sponsor routes. WordPress's
-test library manages database transactions; PHPUnit global serialization is
-disabled because it invalidates the live database connection.
-
-Prerequisites:
-- A **disposable** MySQL/MariaDB database whose name starts with `sponsor_test_`.
-- PHP with mysqli, GD, and cURL.
-- An isolated licensed ACF PRO installation, not a live plugin checkout.
-
-**The WordPress test bootstrap recreates tables. Never supply a live database.**
-
-```sh
-export SPONSOR_INTEGRATION_TESTS=1
-export SPONSOR_TEST_DB_NAME=sponsor_test_receiver
-export SPONSOR_TEST_DB_HOST=localhost:/path/to/isolated/mysql.sock
-export SPONSOR_TEST_DB_USER=test_user
-export SPONSOR_TEST_DB_PASSWORD=test_password
-export ACF_PLUGIN_FILE=/path/to/isolated/advanced-custom-fields-pro/acf.php
-composer test:integration
-```
-
-`WP_TESTS_DIR` defaults to the installed `vendor/wp-phpunit/wp-phpunit` library.
-The bootstrap blocks real mail and external WordPress HTTP requests. All
-addresses and input data in the tests are synthetic.
-
-Known upstream compatibility: ACF's select schema uses `int` instead of
-`integer`. Native tests explicitly expect WordPress's corresponding notice
-only for `acf[contact_method]`; other notices still fail. `NativeTestCase`
-bridges WordPress's legacy expected-notice reader to PHPUnit 11 without
-disabling notice assertions. Upstream PHPUnit deprecation reports remain visible.
 
 ## Deploy
 

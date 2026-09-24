@@ -5,7 +5,6 @@
     "license": "MIT",
     "scripts": {
         "test": "vendor/bin/phpunit --testsuite unit",
-        "test:integration": "vendor/bin/phpunit --configuration phpunit-integration.xml",
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit --testsuite unit",
         "lint": "vendor/bin/mago lint",
         "fix": "vendor/bin/mago lint --format-after-fix --fix",
