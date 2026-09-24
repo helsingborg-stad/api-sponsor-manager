@@ -1,4 +1,5 @@
 <!-- SHIELDS -->
+
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
@@ -15,8 +16,9 @@
 </p>
 
 ## Table of Contents
+
 - [Table of Contents](#table-of-contents)
-- [About API Sponsor Manager](#about-API Sponsor Manager)
+- [About API Sponsor Manager](#about-api-sponsor-manager)
   - [Built With](#built-with)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
@@ -24,6 +26,7 @@
 - [Usage](#usage)
 - [Multipart REST upload protocol (v4)](#multipart-rest-upload-protocol-v4)
 - [Testing](#testing)
+  - [Standalone tests](#standalone-tests)
 - [Deploy](#deploy)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -38,10 +41,10 @@ Here's a blank template to get started:
 
 ### Built With
 
-* PHP
-* NPM
-* Webpack
-* Modularity
+- PHP
+- NPM
+- Webpack
+- Modularity
 
 ## Getting Started
 
@@ -50,25 +53,35 @@ To get a local copy up and running follow these simple steps.
 ### Prerequisites
 
 This is an example of how to list things you need to use the software and how to install them (mac os).
-* composer
+
+- composer
+
 ```sh
 brew install composer
 ```
-* npm
+
+- npm
+
 ```sh
 brew install node
 ```
+
 ### Installation
 
 1. Clone the repo
+
 ```sh
 git clone https://github.com/helsingborg-stad/api-sponsor-manager.git
 ```
+
 2. Install and build NPM packages
+
 ```sh
 npm install && npm run build
 ```
+
 3. Install composer packages
+
 ```sh
 composer install
 ```
@@ -170,9 +183,18 @@ Distributed under the [MIT License][license-url].
 
 - [othneildrew Best README Template](https://github.com/othneildrew/Best-README-Template)
 
+<!-- MARKDOWN LINKS & IMAGES -->
+<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
+
+Distributed under the [MIT License][license-url].
+
+## Acknowledgements
+
+- [othneildrew Best README Template](https://github.com/othneildrew/Best-README-Template)
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
+
 [contributors-shield]: https://img.shields.io/github/contributors/helsingborg-stad/api-sponsor-manager.svg?style=flat-square
 [contributors-url]: https://github.com/helsingborg-stad/api-sponsor-manager/graphs/contributors
 [forks-shield]: https://img.shields.io/github/forks/helsingborg-stad/api-sponsor-manager.svg?style=flat-square
@@ -183,4 +205,3 @@ Distributed under the [MIT License][license-url].
 [issues-url]: https://github.com/helsingborg-stad/api-sponsor-manager/issues
 [license-shield]: https://img.shields.io/github/license/helsingborg-stad/api-sponsor-manager.svg?style=flat-square
 [license-url]: https://raw.githubusercontent.com/helsingborg-stad/api-sponsor-manager/master/LICENSE
-[product-screenshot]: images/screenshot.png

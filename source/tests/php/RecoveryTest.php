@@ -29,9 +29,9 @@ final class RecoveryTest extends PluginTestCase
         $this->wp = Mockery::mock(WpService::class);
     }
 
-    private function request(): WP_REST_Request
+    private function request(): TestRestRequest
     {
-        return new WP_REST_Request('POST', '/wp/v2/posts');
+        return new TestRestRequest('POST', '/wp/v2/posts');
     }
 
     /** @param list<array{int, string, string}> $marked */
@@ -47,7 +47,11 @@ final class RecoveryTest extends PluginTestCase
 
     private function attachment(int $id, int $parent = 0): WP_Post
     {
-        return new WP_Post((object) ['ID' => $id, 'post_type' => 'attachment', 'post_parent' => $parent]);
+        $post = new WP_Post([]);
+        $post->ID = $id;
+        $post->post_type = 'attachment';
+        $post->post_parent = $parent;
+        return $post;
     }
 
     public function testBeginRefusesASecondContextForTheSameRequest(): void
