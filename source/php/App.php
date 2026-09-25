@@ -30,6 +30,9 @@ class App
             $cronScheduler
         ]);
 
+        $recovery = new AcfRestUpload\Recovery($wpService);
+        (new AcfRestUpload\CreateReceiver($wpService, $acfService, $recovery))->addHooks();
+
         $cronScheduler->addEvent(
             new CronEvent(
                 'daily', 
@@ -37,6 +40,7 @@ class App
                 [new DeleteExpiredPost($wpService, $acfService), 'onCronEvent']
             )
         );
+        $cronScheduler->addEvent(new CronEvent('hourly', AcfRestUpload\Recovery::HOOK, [$recovery, 'cleanup']));
     }
 
     public function init(Hookable ...$hookables)

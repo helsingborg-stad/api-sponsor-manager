@@ -7,12 +7,16 @@ use AcfService\Contracts\GetFields;
 use ApiSponsorManager\Helper\HooksRegistrar\Hookable;
 use ApiSponsorManager\Helper\NotificationServices\NotificationService;
 use WP_Post;
+use WP_REST_Request;
+use WP_REST_Response;
 use WpService\Contracts\__;
 use WpService\Contracts\AddAction;
 use WpService\Contracts\GetEditPostLink;
 
 class Notifications implements Hookable {
     private array $mailQueue = [];
+    private array $requests = [];
+    private array $createQueues = [];
 
     public function __construct(
         public AddAction&GetEditPostLink&__ $wpService, 
@@ -64,7 +68,9 @@ class Notifications implements Hookable {
         if ($newStatus === 'draft' && $oldStatus === 'new') {
             foreach ($this->getEmailTemplates() as $template) {
                 if ($template['trigger'] === 'submit' && $post->post_type === $template['post_type']) {
-                    $this->mailQueue[] = [$template, $post]; //store for later use when meta is avalible
+                    if (!$this->queueForCreate($template, $post)) {
+                        $this->mailQueue[$post->ID][] = [$template, $post];
+                    }
                 }
             }
         }
@@ -81,17 +87,68 @@ class Notifications implements Hookable {
         }
     }
 
-    public function sendEmailsAfterMetaHasBeenSaved()
+    public function sendEmailsAfterMetaHasBeenSaved(int $postId): void
     {
-        foreach ($this->mailQueue as $params) {
+        $queue = $this->mailQueue[$postId] ?? [];
+        unset($this->mailQueue[$postId]);
+        foreach ($queue as $params) {
             $this->composeAndSendEmail(...$params);
         }
+    }
+
+    public function beforeRestCallbacks($response, $handler, WP_REST_Request $request): mixed
+    {
+        $this->requests[spl_object_id($request)] = $request;
+        return $response;
+    }
+
+    /** The native create result is the only completion signal: 201 consumes the queue, anything else discards it. */
+    public function afterRestCallbacks($response, $handler, WP_REST_Request $request): mixed
+    {
+        unset($this->requests[spl_object_id($request)]);
+        if (!$response instanceof WP_REST_Response || $response->get_status() !== 201) {
+            $this->discardCreate($request);
+            return $response;
+        }
+        try { $this->completedCreate((int) ($response->get_data()['id'] ?? 0), $request); }
+        catch (\Throwable) { /* A confirmed native create is not failed by its notification observer. */ }
+        return $response;
+    }
+
+    public function completedCreate(int $postId, WP_REST_Request $request): void
+    {
+        $id = spl_object_id($request);
+        $queue = $this->createQueues[$id][$postId] ?? [];
+        unset($this->createQueues[$id]);
+        foreach ($queue as $params) {
+            $this->composeAndSendEmail(...$params);
+        }
+    }
+
+    public function discardCreate(WP_REST_Request $request): void
+    {
+        unset($this->createQueues[spl_object_id($request)], $this->requests[spl_object_id($request)]);
+    }
+
+    private function queueForCreate(array $template, WP_Post $post): bool
+    {
+        $id = array_key_last($this->requests);
+        $request = $id === null ? null : $this->requests[$id];
+        if (!$request instanceof WP_REST_Request
+            || strtolower(trim((string) $request->get_header('X-ACF-Rest-Upload'))) !== 'true') {
+            return false;
+        }
+        $this->createQueues[$id][$post->ID][] = [$template, $post];
+        return true;
     }
 
     public function addHooks(): void
     {
         $this->wpService->addAction('transition_post_status', [$this, 'onSubmitted'], 10, 3);
         $this->wpService->addAction('transition_post_status', [$this, 'onPublish'], 10, 3);
-        $this->wpService->addAction('ModularityFrontendForm/afterInsertPost', [$this, 'sendEmailsAfterMetaHasBeenSaved'], 1, 0);
+        $this->wpService->addAction('ModularityFrontendForm/afterInsertPost', [$this, 'sendEmailsAfterMetaHasBeenSaved'], 1, 1);
+
+        add_filter('rest_request_before_callbacks', [$this, 'beforeRestCallbacks'], 1, 3);
+        add_filter('rest_request_after_callbacks', [$this, 'afterRestCallbacks'], PHP_INT_MAX, 3);
     }
 }
