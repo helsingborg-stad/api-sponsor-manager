@@ -24,7 +24,7 @@
   - [Prerequisites](#prerequisites)
   - [Installation](#installation)
 - [Usage](#usage)
-- [Multipart REST upload protocol (v4)](#multipart-rest-upload-protocol-v4)
+- [Multipart REST upload protocol](#multipart-rest-upload-protocol)
 - [Testing](#testing)
   - [Standalone tests](#standalone-tests)
 - [Deploy](#deploy)
@@ -92,18 +92,17 @@ Use this space to show useful examples of how a project can be used. Additional 
 
 _For more examples, please refer to the [Documentation](https://example.com)_
 
-## Multipart REST upload protocol (v4)
+## Multipart REST upload protocol
 
 The receiver accepts native collection `POST` creates for
 `/wp/v2/sponsor-assignments` and `/wp/v2/sponsor-offerings`. The image field
 must be an ACF `image` field exposed in the native REST schema. No opt-in
 setting is required.
 
-Send `X-ACF-Rest-Upload-Version: 4`. Requests without that header pass through
-untouched and keep native JSON behavior; a headerless native create still
-returns 201. A present header whose value is not `4`, including an empty value,
-returns 400 `acf_rest_upload_unsupported_version`. Non-multipart requests, item
-routes, and endpoints that do not keep native post creation return 400
+Multipart requests use `Content-Type: multipart/form-data` and
+`X-ACF-Rest-Upload: true`. Requests without that header pass through untouched
+and keep native JSON behavior; other header values also do not opt in. Item
+routes and endpoints that do not keep native post creation return 400
 `acf_rest_upload_unsupported_request`.
 
 Send ordinary fields directly with PHP-compatible names such as `title`,
@@ -132,7 +131,7 @@ and notifications. The receiver cleans up resources owned by an observed failed
 request. A crash can leave partial data.
 
 The local Database handler keeps `ModularityFrontendForm/afterInsertPost`. It
-sends its normal notification after metadata saving. A version-4 completion
+sends its normal notification after metadata saving. A multipart completion
 notification sends only after the receiver completes the exact request
 successfully.
 

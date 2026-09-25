@@ -14,7 +14,7 @@ final class CreatePayload
     {
         $values = $request->get_body_params();
         if (!is_array($values) || isset($values['_acf_rest_payload']) || isset($values['_acf_rest_files'])) {
-            return CreateReceiver::error('invalid_payload', 400, 'Supply native multipart fields.');
+            return CreateReceiver::error('invalid_payload', 400, 'Supply multipart fields.');
         }
         if ($this->fieldBytes($values) > 1_048_576) {
             return CreateReceiver::error('too_large', 413, 'Multipart fields exceed 1 MiB.');

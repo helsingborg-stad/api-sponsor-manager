@@ -32,6 +32,15 @@ final class TestRestRequest extends \WP_REST_Request
         return $this->headers[$this->headerKey((string) $key)] ?? null;
     }
 
+    public function get_content_type(): ?array
+    {
+        $header = $this->get_header('Content-Type');
+        if ($header === null) {
+            return null;
+        }
+        return ['value' => strtolower(trim(explode(';', $header, 2)[0])), 'parameters' => []];
+    }
+
     private function headerKey(string $key): string
     {
         return strtolower(str_replace('_', '-', $key));

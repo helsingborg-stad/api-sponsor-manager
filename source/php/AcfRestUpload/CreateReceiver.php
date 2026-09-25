@@ -28,10 +28,13 @@ final class CreateReceiver
 
     public function prepare(mixed $response, mixed $server, WP_REST_Request $request): mixed
     {
-        $version = $request->get_header('X-ACF-Rest-Upload-Version');
-        if ($response !== null || $version === null) { return $response; }
-        if ($version !== '4') { return self::error('unsupported_version', 400, 'Only protocol version 4 is supported.'); }
-        if ($request->get_method() !== 'POST' || ($request->get_content_type()['value'] ?? '') !== 'multipart/form-data') {
+        if ($response !== null || strtolower(trim((string) $request->get_header('X-ACF-Rest-Upload'))) !== 'true') {
+            return $response;
+        }
+        if (($request->get_content_type()['value'] ?? '') !== 'multipart/form-data') {
+            return self::error('unsupported_request', 400, 'Use a multipart collection create.');
+        }
+        if ($request->get_method() !== 'POST') {
             return self::error('unsupported_request', 400, 'Use a multipart native collection create.');
         }
         $handler = null;

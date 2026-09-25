@@ -39,10 +39,10 @@ class NotificationsTest extends PluginTestCase
         return $post;
     }
 
-    private function request(string $version = '4'): TestRestRequest
+    private function request(bool $multipart = true): TestRestRequest
     {
         $request = new TestRestRequest('POST', '/wp/v2/sponsor-offerings');
-        $request->set_header('X-ACF-Rest-Upload-Version', $version);
+        $request->set_header('X-ACF-Rest-Upload', $multipart ? 'true' : 'false');
         return $request;
     }
 
@@ -87,7 +87,7 @@ class NotificationsTest extends PluginTestCase
     {
         $outer = $this->request();
         $this->notifications->beforeRestCallbacks(null, [], $outer);
-        $nested = $this->request('2');
+        $nested = $this->request(false);
         $this->notifications->beforeRestCallbacks(null, [], $nested);
         $this->notifications->onSubmitted('draft', 'new', $this->post(88));
         $this->notifications->sendEmailsAfterMetaHasBeenSaved(88);

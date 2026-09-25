@@ -134,7 +134,8 @@ class Notifications implements Hookable {
     {
         $id = array_key_last($this->requests);
         $request = $id === null ? null : $this->requests[$id];
-        if (!$request instanceof WP_REST_Request || $request->get_header('X-ACF-Rest-Upload-Version') !== '4') {
+        if (!$request instanceof WP_REST_Request
+            || strtolower(trim((string) $request->get_header('X-ACF-Rest-Upload'))) !== 'true') {
             return false;
         }
         $this->createQueues[$id][$post->ID][] = [$template, $post];
