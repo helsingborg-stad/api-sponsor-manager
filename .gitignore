@@ -15,6 +15,7 @@
 !**/*.php
 !**/*.po
 !**/*.pot
+!**/*.py
 !**/*.scss
 !**/*.sh
 !**/*.toml
@@ -28,3 +29,4 @@
 /vendor/
 /.phpunit.cache/
 /.phpunit.integration-cache/
+__pycache__/

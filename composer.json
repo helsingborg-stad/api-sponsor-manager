@@ -3,6 +3,10 @@
     "description": "Manages looking for sponsor listnings.",
     "type": "wordpress-plugin",
     "license": "MIT",
+    "dist": {
+        "type": "zip",
+        "url": "https://github.com/helsingborg-stad/api-sponsor-manager/releases/download/%prettyVersion%/api-sponsor-manager-%prettyVersion%.zip"
+    },
     "scripts": {
         "test": "vendor/bin/phpunit --testsuite unit",
         "test:coverage": "XDEBUG_MODE=coverage vendor/bin/phpunit --testsuite unit",

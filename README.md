@@ -158,7 +158,27 @@ composer lint
 
 ## Deploy
 
-Instructions for deploys.
+Pushes to `main` and manual runs of **Publish Composer release** create
+semantic-versioned releases based on Git history and existing tags. The
+workflow updates the plugin and package versions, tests and builds the plugin,
+and publishes `api-sponsor-manager-<version>.zip`. Version commits do not
+trigger another release. A changed branch tip, conflicting tag, or conflicting
+release asset stops the workflow; resolve the problem before retrying. Existing
+releases are not repackaged.
+
+The ZIP is for Composer, not direct WordPress installation. It contains built
+assets and runtime source, but no `vendor/` directory. Composer 2.1 or newer
+installs PHP dependencies separately; use a Composer version compatible with
+your PHP version, and load the consuming project's Composer autoloader
+before WordPress loads this plugin. A source checkout can use its own
+`vendor/autoload.php` after `composer install`. Source installs do not include
+the generated assets until `npm ci && npm run build` is run.
+
+Packagist may index a tag before its asset is published. After a release, run
+`bash scripts/check_packagist_release.sh <version>`, then install that version
+in a clean Composer project with `--prefer-dist` and verify the release ZIP was
+downloaded. Retry later if metadata has not propagated. Local archive tests do
+not verify Packagist.
 
 ## Roadmap
 

@@ -34,8 +34,22 @@ load_plugin_textdomain(API_SPONSOR_MANAGER_TEXT_DOMAIN, false, dirname(plugin_ba
 
 require_once API_SPONSOR_MANAGER_PATH . 'Public.php';
 
-// Register the autoloader
-require __DIR__ . '/vendor/autoload.php';
+// Source checkouts have their own autoloader; Composer consumers load theirs.
+if (is_file(__DIR__ . '/vendor/autoload.php')) {
+    require_once __DIR__ . '/vendor/autoload.php';
+}
+
+foreach ([
+    \ApiSponsorManager\App::class,
+    \AcfExportManager\AcfExportManager::class,
+    \AcfService\Implementations\NativeAcfService::class,
+    \WpService\Implementations\NativeWpService::class,
+    \WpUtilService\WpUtilService::class,
+] as $requiredClass) {
+    if (!class_exists($requiredClass)) {
+        throw new \RuntimeException('API Sponsor Manager requires its Composer dependencies and autoloader.');
+    }
+}
 
 // Acf auto import and export
 add_action('acf/init', function () {
