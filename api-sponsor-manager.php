@@ -4,7 +4,7 @@
  * Plugin Name:       API Sponsor Manager
  * Plugin URI:        https://github.com/helsingborg-stad/api-sponsor-manager
  * Description:       Manages looking for sponsor listnings.
- * Version:           1.0.8
+ * Version:           1.1.0
  * Author:            Nikolas Ramsted
  * Author URI:        https://github.com/helsingborg-stad
  * License:           MIT
