@@ -1,7 +1,9 @@
 <?php 
 
-if (function_exists('acf_add_local_field_group')) {
-    acf_add_local_field_group(array(
+
+if (function_exists('acf_add_local_field_group')) {
+
+    acf_add_local_field_group(array(
     'key' => 'group_69a99cbe03b51',
     'title' => __('Sponsor Offering', 'api-sponsor-manager'),
     'fields' => array(
@@ -38,7 +40,7 @@
             'aria-label' => '',
             'type' => 'date_picker',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -58,7 +60,7 @@
             'aria-label' => '',
             'type' => 'time_picker',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -260,7 +262,7 @@
             'aria-label' => '',
             'type' => 'time_picker',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -278,7 +280,7 @@
             'aria-label' => '',
             'type' => 'select',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '',
@@ -324,4 +326,5 @@
     'allow_ai_access' => false,
     'ai_description' => '',
 ));
-}
+
+}

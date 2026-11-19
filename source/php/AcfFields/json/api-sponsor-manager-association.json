@@ -30,7 +30,7 @@
             "aria-label": "",
             "type": "textarea",
             "instructions": "",
-            "required": 0,
+            "required": 1,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "",
@@ -38,7 +38,7 @@
                 "id": ""
             },
             "default_value": "",
-            "maxlength": "",
+            "maxlength": 500,
             "allow_in_bindings": 0,
             "rows": "",
             "placeholder": "",
@@ -111,9 +111,9 @@
             "label": "Phone",
             "name": "organization_phone",
             "aria-label": "",
-            "type": "number",
+            "type": "text",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "50",
@@ -121,11 +121,8 @@
                 "id": ""
             },
             "default_value": "",
-            "min": "",
-            "max": "",
             "allow_in_bindings": 0,
             "placeholder": "",
-            "step": "",
             "prepend": "",
             "append": ""
         },
@@ -212,4 +209,4 @@
     "allow_ai_access": false,
     "ai_description": ""
 }]
-
+

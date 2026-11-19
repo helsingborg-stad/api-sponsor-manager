@@ -23,7 +23,7 @@ class DeleteExpiredPost
     }
 
 
-    public function getExpiredPosts(): array
+    public function getExpiredPosts(?\DateTimeImmutable $now = null): array
     {
         $posts = $this->wpService->getPosts([
             'post_type' => ['assignment', 'offering'],
@@ -32,24 +32,24 @@ class DeleteExpiredPost
             'post_status' => 'publish',
         ]);
 
-        return array_filter($posts, fn($postId) => $this->postHasExpired($postId));
+        $now ??= new \DateTimeImmutable();
+        return array_filter($posts, fn($postId) => $this->postHasExpired($postId, $now));
     }
 
-    private function postHasExpired(int $postId): bool
+    private function postHasExpired(int $postId, \DateTimeImmutable $now): bool
     {
         $dueDate = $this->acfService->getField('due_date', $postId); // Y-m-d
-        $dueTime = $this->acfService->getField('due_time', $postId); // H:i:s
-
-        if (empty($dueDate) || empty($dueTime)) {
+        if (!is_string($dueDate) || $dueDate === '') {
             return false;
         }
 
-        $expiredAt = \DateTime::createFromFormat('Y-m-d H:i:s', $dueDate . ' ' . $dueTime);
-
-        if ($expiredAt === false) {
+        // Backa's calendar deadline includes the entire day in Helsingborg, not the receiver's UTC day.
+        $date = \DateTimeImmutable::createFromFormat('!Y-m-d', $dueDate, new \DateTimeZone('Europe/Stockholm'));
+        if (!$date || $date->format('Y-m-d') !== $dueDate) {
             return false;
         }
 
-        return new \DateTime() >= $expiredAt;
+        // Legacy due_time stays in storage but does not shorten the inclusive advertisement date.
+        return $now >= $date->modify('+1 day');
     }
 }

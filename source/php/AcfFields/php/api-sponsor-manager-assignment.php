@@ -1,7 +1,9 @@
 <?php 
 
-if (function_exists('acf_add_local_field_group')) {
-    acf_add_local_field_group(array(
+
+if (function_exists('acf_add_local_field_group')) {
+
+    acf_add_local_field_group(array(
     'key' => 'group_69a97690d547c',
     'title' => __('Sponsor Assignment', 'api-sponsor-manager'),
     'fields' => array(
@@ -38,7 +40,7 @@
             'aria-label' => '',
             'type' => 'date_picker',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -58,7 +60,7 @@
             'aria-label' => '',
             'type' => 'time_picker',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -123,7 +125,7 @@
             'aria-label' => '',
             'type' => 'wysiwyg',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '',
@@ -239,7 +241,7 @@
             'aria-label' => '',
             'type' => 'time_picker',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -257,7 +259,7 @@
             'aria-label' => '',
             'type' => 'select',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '',
@@ -279,6 +281,27 @@
             'placeholder' => '',
             'create_options' => 0,
             'save_options' => 0,
+        ),
+        12 => array(
+            'key' => 'field_b449_counter_performance',
+            'label' => __('What the association can offer the sponsor in thanks', 'api-sponsor-manager'),
+            'name' => 'proposal_for_counter_performance',
+            'aria-label' => '',
+            'type' => 'textarea',
+            'instructions' => '',
+            'required' => 0,
+            'conditional_logic' => 0,
+            'wrapper' => array(
+                'width' => '',
+                'class' => '',
+                'id' => '',
+            ),
+            'default_value' => '',
+            'maxlength' => '',
+            'allow_in_bindings' => 0,
+            'rows' => '',
+            'placeholder' => '',
+            'new_lines' => '',
         ),
     ),
     'location' => array(
@@ -303,4 +326,5 @@
     'allow_ai_access' => false,
     'ai_description' => '',
 ));
-}
+
+}

@@ -1,7 +1,9 @@
 <?php 
 
-if (function_exists('acf_add_local_field_group')) {
-    acf_add_local_field_group(array(
+
+if (function_exists('acf_add_local_field_group')) {
+
+    acf_add_local_field_group(array(
     'key' => 'group_69a9552f0e029',
     'title' => __('Association', 'api-sponsor-manager'),
     'fields' => array(
@@ -33,7 +35,7 @@
             'aria-label' => '',
             'type' => 'textarea',
             'instructions' => '',
-            'required' => 0,
+            'required' => 1,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '',
@@ -41,7 +43,7 @@
                 'id' => '',
             ),
             'default_value' => '',
-            'maxlength' => '',
+            'maxlength' => 500,
             'allow_in_bindings' => 0,
             'rows' => '',
             'placeholder' => '',
@@ -114,9 +116,9 @@
             'label' => __('Phone', 'api-sponsor-manager'),
             'name' => 'organization_phone',
             'aria-label' => '',
-            'type' => 'number',
+            'type' => 'text',
             'instructions' => '',
-            'required' => 1,
+            'required' => 0,
             'conditional_logic' => 0,
             'wrapper' => array(
                 'width' => '50',
@@ -124,11 +126,8 @@
                 'id' => '',
             ),
             'default_value' => '',
-            'min' => '',
-            'max' => '',
             'allow_in_bindings' => 0,
             'placeholder' => '',
-            'step' => '',
             'prepend' => '',
             'append' => '',
         ),
@@ -215,4 +214,5 @@
     'allow_ai_access' => false,
     'ai_description' => '',
 ));
-}
+
+}

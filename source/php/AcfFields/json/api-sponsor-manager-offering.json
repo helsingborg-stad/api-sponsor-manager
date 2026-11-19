@@ -35,7 +35,7 @@
             "aria-label": "",
             "type": "date_picker",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "50",
@@ -55,7 +55,7 @@
             "aria-label": "",
             "type": "time_picker",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "50",
@@ -254,7 +254,7 @@
             "aria-label": "",
             "type": "time_picker",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "50",
@@ -272,7 +272,7 @@
             "aria-label": "",
             "type": "select",
             "instructions": "",
-            "required": 1,
+            "required": 0,
             "conditional_logic": 0,
             "wrapper": {
                 "width": "",
@@ -317,4 +317,4 @@
     "allow_ai_access": false,
     "ai_description": ""
 }]
-
+
